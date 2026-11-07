@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a problem with an existing installation or supported workflow.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a new inverter/protocol, use Device or protocol support instead.
+        Review diagnostics before attaching them. Do not include access tokens,
+        passwords or private network captures. A hardware write is not needed
+        to reproduce a display or connection problem.
+  - type: input
+    id: versions
+    attributes:
+      label: Integration and Home Assistant versions
+      placeholder: Include the integration version and diagnostic fingerprint
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Inverter, collector and selected profile
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps, expected result and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Diagnostics and relevant logs
+      description: Include timestamps and any operation ID; redact private information.

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Solar Inverter Cloud Bridge — Router setup</title>
+  <style>
+    html{color-scheme:light dark}*{box-sizing:border-box}body{font:16px/1.6 system-ui;max-width:1000px;margin:auto;padding:24px;color:light-dark(#22313b,#e3eaf0);background:light-dark(#f5f8fa,#142029)}h1,h2,h3,p{margin:0 0 16px}h2{margin-top:24px}a{color:light-dark(#146b77,#78cbd7)}section,fieldset{min-width:0;border:1px solid #80808066;border-radius:12px;padding:20px;margin:0 0 24px}fieldset{margin-top:16px}legend{font-weight:650;padding:0 8px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.field{display:flex;flex-direction:column;gap:6px}input,select,textarea,button{font:inherit;min-width:0;border:1px solid #80808088;border-radius:8px;padding:10px;min-height:44px}input,select,textarea{width:100%;background:light-dark(white,#1d2d38);color:inherit}button{cursor:pointer;background:light-dark(#e6efef,#254049);color:inherit}.primary{background:#147d78;color:white}.check{display:flex;align-items:center;gap:10px;min-height:44px}.check input{width:20px;min-height:20px;flex-shrink:0}.help{font-size:14px;color:light-dark(#566774,#b1c1cc)}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}.notice{padding:16px;background:#80808018;border-radius:8px}pre{padding:16px;background:#80808018;overflow:auto;max-width:100%;font-size:13px;line-height:1.6}code{overflow-wrap:anywhere}.error{color:light-dark(#a32727,#ffb1b1)}[hidden]{display:none!important}details{margin:16px 0}summary{cursor:pointer;font-weight:600}.command-heading{display:flex;gap:12px;align-items:center;justify-content:space-between}.command-heading h3{margin:0}#output{margin-top:24px}#output:focus{outline:none}@media(max-width:650px){body{padding:16px}.grid{grid-template-columns:1fr}section,fieldset{padding:16px}}
+  </style>
+  <style>
+    #known-domains .check { align-items: flex-start; padding: 8px 0; }
+    #known-domains .check input { margin-top: 4px; }
+    #known-domains strong, #known-domains small { display: block; overflow-wrap: anywhere; }
+    #known-domains .domain-child { margin-left: 28px; padding-left: 12px; border-left: 2px solid #80808055; }
+    #known-domains .covered-domain { opacity: .5; }
+  </style>
+  <script defer src="/solar_inverter_bridge/router-guide.js?v=0.10.0"></script>
+</head>
+<body>
+  <h1>Router setup</h1>
+  <p>Choose your router, check the addresses, and generate commands to copy. Start with DNS only; add port redirection only if needed.</p>
+  <p class="notice"><strong>Check which DNS server the inverter uses.</strong> It must send its DNS requests to the router or DNS server where you add these records. For example, records on your router will not help if the inverter asks 8.8.8.8. Set the inverter's DNS server through DHCP or its network settings, or enable DNS interception below. Reconnect the collector after changing DHCP DNS settings. Home Assistant is the address returned by DNS, not the DNS server.</p>
+  <form id="router-form">
+    <section aria-labelledby="addresses-title">
+      <h2 id="addresses-title">1. Addresses and router</h2>
+      <p id="prefill-note" class="help">Known addresses are filled in. Check them and enter any missing values.</p>
+      <div class="grid">
+        <label class="field">Router platform<select id="router" name="router"><option value="mikrotik">MikroTik RouterOS 7</option><option value="openwrt">OpenWrt / firewall4</option><option value="pfsense">pfSense / PHP shell</option><option value="opnsense">OPNsense / DNat API</option><option value="linux">Linux / native nftables + dnsmasq</option><option value="other">Other firmware (model-specific setup)</option></select></label>
+        <label class="field">Home Assistant LAN IPv4<input id="ha_ip" name="ha_ip" required list="ha-addresses" autocomplete="off" placeholder="Home Assistant's fixed LAN IP"></label>
+        <label class="field">Router LAN IPv4<input id="router_ip" name="router_ip" required autocomplete="off" placeholder="Your LAN gateway"></label>
+        <label class="field">DNS server IPv4<input id="dns_ip" name="dns_ip" required autocomplete="off" placeholder="Usually your router's LAN IP"><span class="help">The inverter must use this server. Add the selected domain records on this device.</span></label>
+      </div>
+      <details id="advanced-network"><summary>Advanced: interfaces and zones (optional)</summary>
+        <p class="help">Leave these empty for a typical LAN. MikroTik and Linux use IP-scoped rules without interface names. OpenWrt, pfSense, and OPNsense use their standard <code>lan</code> zone/interface. Change these only for a different LAN or VLAN setup.</p>
+        <div class="grid">
+          <label class="field">Collector-facing interface / zone<input id="lan_interface" name="lan_interface" autocomplete="off" placeholder="Automatic / standard LAN"><span id="interface-help" class="help">Optional restriction to a specific interface.</span></label>
+          <label class="field">HA-facing interface / zone<input id="ha_interface" name="ha_interface" autocomplete="off" placeholder="Same LAN"></label>
+          <label class="field">DNS-facing interface / zone<input id="dns_interface" name="dns_interface" autocomplete="off" placeholder="Same LAN"></label>
+        </div>
+      </details>
+      <datalist id="ha-addresses"></datalist>
+      <p class="help">Use fixed LAN addresses for HA and the DNS server.</p>
+    </section>
+    <section aria-labelledby="scope-title">
+      <h2 id="scope-title">2. Connection method and scope</h2>
+      <label class="field">Connection method<select id="method" name="method"><option value="dns">DNS only — start here</option><option value="redirect">DNS + TCP port redirection</option></select></label>
+      <p class="help">If the domains already point to HA and ports 502/18899/38899 are reachable, port redirection is usually unnecessary. EyeBond on 502 is not a standard Modbus TCP server. Check each listener in Bridge; DNS does not change ports.</p>
+      <label class="check"><input type="checkbox" id="intercept_dns" name="intercept_dns">Intercept DNS requests (UDP and TCP 53)</label>
+      <p class="help">Enable this only if the inverter uses another DNS server and you cannot change it.</p>
+      <label class="field">Which collectors?<select id="scope" name="scope"><option value="network">Shared LAN / IoT network — no inverter IP needed</option><option value="single">One collector with a known IP</option></select></label>
+      <div class="grid">
+        <label class="field" id="subnet-field">Collector LAN / IoT subnet<input id="subnet" name="subnet" autocomplete="off" placeholder="Network address with CIDR prefix"><span class="help">Required for shared NAT rules. Optional for DNS-only; useful for the Bridge allowlist.</span></label>
+        <label class="field" id="collector-field" hidden>Collector IPv4<input id="collector_ip" name="collector_ip" autocomplete="off" placeholder="Reserved collector IP"></label>
+      </div>
+      <p id="scope-note" class="notice">Shared rules match this subnet directly. Shared DNS interception also affects other clients; an external DNS resolver is bypassed to prevent a loop.</p>
+      <label class="check" id="hairpin-field" hidden><input type="checkbox" id="hairpin" name="hairpin" checked>Add scoped return-path NAT (HA and collectors share a subnet)</label>
+      <p id="dhcp-note" class="help">For DNS-only or shared subnet rules, a changing collector IP is less important. Bridge must still allow the new source address.</p>
+    </section>
+    <section aria-labelledby="domains-title">
+      <h2 id="domains-title">3. Collector domains</h2>
+      <div class="actions"><button type="button" id="select-all">Select all</button><button type="button" id="select-none">Clear selection</button></div>
+      <div id="known-domains"></div>
+      <p class="help">Choose the individual names you need, or enable <code>*.eybond.com</code> to cover them together. The wildcard starts unchecked. When selected, the individual EyeBond checkboxes below it are disabled; their choices return when you uncheck the wildcard.</p>
+      <label class="field">Additional observed domains (optional)<textarea id="extra_domains" name="extra_domains" rows="2" placeholder="One name per line; use *.example.com for a domain and its subdomains"></textarea></label>
+      <p class="help">The list also includes API and website domains found in ha-dessmonitor. They are not confirmed collector destinations and start unchecked. “Select all” includes every listed domain. Select them if needed for your device; rewriting API/website names to HA can interrupt access to those cloud services for clients using this DNS server.</p>
+    </section>
+    <p id="form-error" class="error" role="alert" hidden></p>
+    <div class="actions"><button type="submit" class="primary" disabled>Generate commands</button><button type="button" id="forget-values">Forget saved values</button></div>
+  </form>
+  <section id="output" tabindex="-1" hidden aria-labelledby="commands-title"><h2 id="commands-title">Your router instructions</h2><p id="summary"></p><p id="dns-use-note" class="notice"></p><p id="interface-note" class="help" hidden></p><details><summary>Platform details</summary><p id="platform-note" class="help"></p></details><div id="commands"></div><p id="allowlist-note" class="help"></p></section>
+  <section>
+    <h2>Switching to the local bridge</h2>
+    <ol><li>Configure local DNS, and only the redirection rules you need.</li><li><strong>A new TCP session is required.</strong> DNS/NAT changes do not move an established cloud connection. The most targeted option is restarting the inverter's Wi-Fi module through its vendor app, if supported. Reconnecting Wi-Fi or restarting the access point/router also breaks the old connection, but affects other devices.</li><li>Cached DNS may keep the old destination until it expires or the module resolves again. After reconnecting, check for fresh complete readings in Bridge.</li></ol>
+    <h2>DHCP reservation and changing IPs</h2>
+    <p><strong>Reserve the collector's IP in the DHCP server whenever a rule matches that individual IP.</strong> Otherwise a lease change breaks the rule. Use the DHCP client list and its “make static / reserve” action; a reservation also needs the collector's MAC, so an IP alone cannot create it correctly.</p>
+    <p>With DNS-only or shared subnet rules, a fixed collector IP is less critical. Bridge identifies the collector by its native DTUPN identity, stored as a hash, rather than its IP. A new IP preserves the saved inverter, name, settings, and journal if that source still passes the allowlist. Replacing the Wi-Fi module can change its identity.</p>
+    <h2>Verification and rollback</h2>
+    <p>Use the generated checks to confirm the DNS answer, rule counters, and fresh readings. Local DNS overrides can affect all clients using that resolver. These recipes cover IPv4 and ordinary DNS, not IPv6 or encrypted DNS.</p>
+    <p>To roll back, remove only the SolarInverterBridge-tagged rules/overrides added by this guide, restore the previous resolver settings, and establish a new connection to the intended owner. Generated commands are configuration recipes; only the user's MikroTik DNS setup has hardware evidence here.</p>
+    <details><summary>Sources and platform support</summary><ul>
+      <li><a href="https://help.mikrotik.com/docs/spaces/ROS/pages/37748767/DNS">RouterOS DNS</a></li>
+      <li><a href="https://openwrt.org/docs/guide-user/firewall/firewall_configuration">OpenWrt firewall configuration</a></li>
+      <li><a href="https://docs.netgate.com/pfsense/en/latest/development/php-shell.html">pfSense PHP shell</a></li>
+      <li><a href="https://docs.opnsense.org/development/api/core/firewall.html">OPNsense firewall API</a> and <a href="https://docs.opnsense.org/development/api/core/unbound.html">Unbound API</a></li>
+      <li><a href="https://wiki.nftables.org/wiki-nftables/index.php/Performing_Network_Address_Translation_(NAT)">nftables NAT</a></li>
+    </ul></details>
+  </section>
+  <noscript>This form needs JavaScript to generate commands locally. No router commands are sent by this page.</noscript>
+</body></html>

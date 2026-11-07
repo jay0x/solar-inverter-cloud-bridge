@@ -1,0 +1,14 @@
+[
+  {"name":"*.eybond.com","suffix":true,"defaultSelected":false,"label":"*.eybond.com","description":"Covers the individual EyeBond names below."},
+  {"name":"dtu_ess.eybond.com","suffix":false,"label":"dtu_ess.eybond.com","description":"Observed collector endpoint, TCP 18899."},
+  {"name":"iot3.eybond.com","suffix":false,"label":"iot3.eybond.com","description":"Observed secondary collector endpoint, TCP 38899."},
+  {"name":"ess.eybond.com","suffix":false,"label":"ess.eybond.com","role":"collector","reported_ports":[502],"dialects":["binary"],"evidence":"external_native_cloud_implementations","support_status":"experimental_transport_exact_map_required","description":"Reported binary EyeBond endpoint, TCP 502; experimental monitoring requires a supported inverter map."},
+  {"name":"m2m.eybond.com","suffix":false,"label":"m2m.eybond.com","description":"Reported SmartValue AT-family endpoint; device compatibility varies."},
+  {"name":"iot.eybond.com","suffix":false,"label":"iot.eybond.com","description":"Reported ValueCloud/AT-family endpoint; device compatibility varies."},
+  {"name":"vip1.eybond.com","suffix":false,"label":"vip1.eybond.com","role":"collector","reported_ports":[18899,502],"dialects":["binary"],"evidence":"external_installation_report","support_status":"experimental_transport_exact_map_required","description":"Reported binary EyeBond endpoint, TCP 18899/502; experimental monitoring requires a supported inverter map."},
+  {"name":"api.dessmonitor.com","suffix":false,"defaultSelected":false,"label":"api.dessmonitor.com","description":"DessMonitor cloud API; not a confirmed collector endpoint."},
+  {"name":"ios.shinemonitor.com","suffix":false,"defaultSelected":false,"label":"ios.shinemonitor.com","description":"ShineMonitor cloud API; not a confirmed collector endpoint."},
+  {"name":"dessmonitor.com","suffix":false,"defaultSelected":false,"label":"dessmonitor.com","description":"Account website; not a confirmed endpoint for the current collector."},
+  {"name":"www.dessmonitor.com","suffix":false,"defaultSelected":false,"label":"www.dessmonitor.com","description":"Public website; not a confirmed endpoint for the current collector."},
+  {"name":"www.shinemonitor.com","suffix":false,"defaultSelected":false,"label":"www.shinemonitor.com","role":"website_and_reported_collector","reported_ports":[502],"dialects":["binary"],"evidence":"external_firmware_analysis","support_status":"experimental_transport_exact_map_required","description":"Website and a reported binary TCP 502 firmware default; exact collector/map compatibility remains unverified."}
+]

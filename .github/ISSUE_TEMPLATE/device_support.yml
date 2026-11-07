@@ -1,0 +1,31 @@
+name: Device or protocol support
+description: Share a compatibility report for an unknown device or an inferred profile.
+title: "[Device support]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        In Inverters, open Collect compatibility report. Include the exact model,
+        collect startup and read evidence, analyze it, then download the ZIP.
+        Attach it below and paste Copy issue description. Raw protocol exchange is
+        optional and may contain hardware identifiers or network settings; review
+        the package before sharing it publicly. No cloud credentials are needed.
+  - type: input
+    id: model
+    attributes:
+      label: Exact inverter and collector model
+      placeholder: Include hardware revision and firmware if known
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Compatibility package and issue description
+      description: Drag the ZIP here and paste the generated issue description. A partial report is useful if no connection reaches Home Assistant.
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: Suggested profile and reference readings
+      description: Which profile was suggested? Do its readings agree with the inverter display? Include time and units. Report control results only if you chose to test them; hardware writes are not required to request support.

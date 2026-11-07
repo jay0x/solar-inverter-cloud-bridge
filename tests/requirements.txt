@@ -1,0 +1,4 @@
+# Adapter tests use real schema validation and small HA API doubles.
+voluptuous>=0.15.2,<0.17
+# Read-only test-VM smoke tooling; not a runtime integration dependency.
+aiohttp>=3.11,<4

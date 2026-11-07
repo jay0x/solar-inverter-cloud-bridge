@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solar Inverter Cloud Bridge",
+        "description": "Receive local collector connections inside Home Assistant. Enter allowed source IPs or CIDR networks, separated by commas. You can also configure them later from Inverters. An empty list rejects new connections.",
+        "data": {"allowed_sources": "Allowed source addresses"}
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "The bridge is already set up. Add each inverter from the Inverters page. A second integration is not a second inverter."
+    },
+    "error": {
+      "cannot_start": "The bridge could not open its collector ports. Stop the other owner and try again.",
+      "invalid_allowed_sources": "Enter valid IP addresses or CIDR networks. Unrestricted networks are not allowed."
+    }
+  },
+  "options": {
+    "step": {"init": {"title": "Collector network", "description": "Allowed sources for new collector connections. Use the router source IP if it translates addresses. Separate entries with commas. Advanced bootstrap preference applies to new silent sessions on all ports; it does not identify a device.", "data": {"allowed_sources": "Allowed source addresses", "bootstrap_preference": "Advanced: bootstrap preference"}}},
+    "error": {"invalid_allowed_sources": "Enter valid IP addresses or CIDR networks. Unrestricted networks are not allowed."}
+  },
+  "services": {
+    "set_clock_sync": {
+      "name": "Set clock sync",
+      "description": "Save automatic clock sync. Administrator only. Synchronization remains separately enabled."
+    },
+    "apply_parameter": {
+      "name": "Apply parameter",
+      "description": "Apply one documented parameter. Supply a stable operation ID; retries of that ID return the saved result. Administrator only."
+    },
+    "get_operation": {
+      "name": "Get operation result",
+      "description": "Read the saved result for a bridge device ID and operation ID. This never sends a write. Administrator only."
+    }
+  }
+}

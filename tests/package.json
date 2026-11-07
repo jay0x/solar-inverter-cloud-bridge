@@ -1,0 +1,6 @@
+{
+  "name": "solar-inverter-bridge-browser-tests",
+  "private": true,
+  "scripts": {"test": "node test_panel.cjs && node test_router_guide.cjs"},
+  "devDependencies": {"playwright": "1.64.1"}
+}

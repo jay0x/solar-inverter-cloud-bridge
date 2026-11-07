@@ -1,0 +1,9 @@
+title = "Solar Inverter Cloud Bridge source scan"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public SRNE parameter identifier, not an API credential"
+regexTarget = "secret"
+regexes = ['''bulk_charging_voltage_per_12v''']

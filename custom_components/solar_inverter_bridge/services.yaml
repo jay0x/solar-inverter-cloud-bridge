@@ -1,0 +1,69 @@
+set_clock_sync:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+    enabled:
+      required: true
+      selector:
+        boolean:
+apply_parameter:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+    key:
+      required: true
+      example: primary_output_priority
+      selector:
+        text:
+    value:
+      required: true
+      example: sbu
+    operation_id:
+      required: true
+      example: "c6e442a6-a5c9-45b3-98af-9c346426d9af"
+      selector:
+        text:
+    expected_value:
+      required: false
+      example: sub
+read_module_info:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+reset_collector:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+export_journal:
+  fields:
+    offset:
+      required: false
+      selector:
+        number:
+          min: 0
+          mode: box
+    limit:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+get_operation:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+    operation_id:
+      required: true
+      selector:
+        text:

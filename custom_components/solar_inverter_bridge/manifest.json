@@ -1,0 +1,13 @@
+{
+  "domain": "solar_inverter_bridge",
+  "name": "Solar Inverter Cloud Bridge",
+  "codeowners": ["@jay0x"],
+  "config_flow": true,
+  "dependencies": ["http", "websocket_api"],
+  "documentation": "https://github.com/jay0x/solar-inverter-cloud-bridge",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/jay0x/solar-inverter-cloud-bridge/issues",
+  "requirements": [],
+  "version": "0.8.1"
+}
