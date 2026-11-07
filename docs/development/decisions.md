@@ -1,43 +1,38 @@
-# Active product and technical decisions
+# Product and technical principles
 
-This is a concise maintenance contract, not an implementation diary. Retained IDs
-refer to the original owner decisions; detailed chronological notes are local history.
+These rules define the current product and its implementation boundaries.
 
-| Decision | Current rule |
+| Area | Rule |
 | --- | --- |
-| D01–D03, D16 | One clean integration in HA Core, named Solar Inverter Cloud Bridge, domain `solar_inverter_bridge`; no legacy application/backend migration framework |
-| D07 | Public documents, UI, messages, comments and examples use American English (en-US). Russian or non-public documents belong only in ignored `docs/private/` |
-| D10–D15, D21 | Manual commands require HA admin. The panel, native entities and optional clock service share the executor; mode selection is superseded by D27 |
-| D12 | External applications own automations/energy optimization. The integration exposes checked entities/actions, not its own scheduling engine |
-| D13 | Persisting policy never replays an old command; former mode preservation is superseded by D27 |
-| D17 | Known R/W without manufacturer limits is editable with a warning and exact wire checks; only actual hardware R/O is read-only |
-| D18, D23 | SQLite owns the durable ledger/related policy; Recorder owns history; HA registries own display overrides. No second authority or blanket Store migration |
-| D19 | Optional automatic Wi-Fi recovery is off initially, capability/collection guarded and durably rate-limited; disconnected collectors cannot receive a reset |
-| D20, D22 | DNS belongs to the local resolver/router. Embedded DNS was declined. The manual WAN-loss task was canceled after the owner identified local DNS behavior |
-| D24 | New binary work uses public source evidence and fixtures without locally available hardware. Useful pre-enrollment capture, analysis and replay are required |
-| D25 | Recognize unlisted devices against implemented families and offer plausible profiles; maintain a sourced list of named models and unresolved candidates |
-| D26 | Inferred compatibility is not a permanent control ban. Permit implemented source-defined controls after explicit warning/permission, with the normal durable and readback checks |
-| D27 | One full-control policy: implemented writable settings are enabled by default. Remove Monitoring/Control/Advanced selection and the separate experimental-control switch. Profile acceptance includes its implemented commands; retain fresh evidence, hardware R/O, admin checks, exact validation, readback and unresolved barriers |
-| D28 | Rename the product Solar Inverter Cloud Bridge; keep domain, service names, entity IDs and local operation. Prepare GitHub/HACS metadata and recheck documentation against the exact candidate before release |
+| Product | One integration in Home Assistant Core: Solar Inverter Cloud Bridge, domain `solar_inverter_bridge` |
+| Runtime | No separate app, MQTT bridge or second backend |
+| Transport | Collector-initiated EyeBond AT/binary sessions on TCP 502/18899/38899; one active inverter I/O owner per physical path |
+| Authorization | Manual controls require an active HA administrator context; all interfaces share one executor |
+| Availability | Implemented writable settings are available after profile acceptance and fresh read checks; hardware R/O, transport and unresolved-operation barriers apply |
+| Numeric settings | Preserve exact scaling, encoding and known dependencies; wire limits are not manufacturer operating limits |
+| Commands | Persist intent and send claim before transmission; verify independently; never replay writes after reconnect/restart |
+| Compatibility | Recognize unlisted models from read evidence and offer source-defined profiles for explicit acceptance |
+| Profile binding | Bind acceptance to the definition digest, route and observed signature; changes require explicit recheck |
+| Data ownership | SQLite owns the ledger, Recorder owns measurement history, HA registries own names and overrides |
+| Network configuration | DNS and routing belong to the router or local resolver; the integration only generates instructions |
+| Maintenance | Clock sync and Wi-Fi recovery are separate opt-ins; recovery is capability-checked and durably rate-limited |
+| Automations | User automations and energy optimization belong outside the integration |
+| Documentation | Public content is en-US and describes current capabilities, usage, limitations and evidence; internal development chronology stays private |
+| Licensing | MPL-2.0 with required third-party copyright and permission notices preserved |
 
-## Additional implementation boundaries
+## Implementation boundaries
 
-All three TCP listeners share dialect admission. A failed listener is reported
-without disabling healthy listeners; no silent port fallback is made. One physical
-path has one active inverter owner. AT's auxiliary channel is not another poller.
-Binding identity is not a source IP, port or brand string.
+All three listeners share dialect detection. A failed listener is reported without
+disabling healthy listeners; no silent port fallback is made. AT's auxiliary
+channel is not another poller. Source IP, port and retail brand do not identify a map.
 
-Current additional-profile bindings include the map/control definition digest and
-observed route/signature. A changed binding is reviewed explicitly; same-profile
-renewal retains HA device/entity IDs and cannot bypass an unresolved operation.
+Same-profile binding renewal retains HA device/entity IDs and cannot bypass an
+unresolved operation. Unknown manufacturer bounds do not make a known R/W field
+read-only; its warning and documented validation remain visible.
 
-MPL-2.0 is the project license. Preserve the original MIT notice for inherited
-portions and the provenance/licensing of external sources.
+## Publication and qualification
 
-## Publication and qualification still require their own work
-
-Do not treat fixtures as hardware proof, packet contents as physical effects, or
-an archive build as release authorization. A public repository/support destination,
-maintainer metadata, publication and any high-impact installation operation need
-their own explicit scope. Follow [documentation policy](documentation-policy.md)
-and the [verification summary](../verification/README.md).
+Fixtures are software evidence, and packet readback is not proof of physical effects.
+Publication and hardware-changing work require explicit scope. Recheck documentation
+against the exact release candidate. Follow [publication](publication.md),
+[documentation policy](documentation-policy.md) and [verification](../verification/README.md).

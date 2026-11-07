@@ -1,8 +1,8 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Development candidate: manifest 0.8.2 / panel 0.16.1, November 7, 2026. The completed
-24-hour hardware-observation baseline is 0.4.0; a later-candidate comparison is still pending.
+Current version: integration 0.8.2 / panel 0.16.1. Checks and hardware qualification
+are described in `docs/verification/README.md` in the source repository.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native
 Protocol 4 / model 32771 reference alias within **24 family-grouped profile variants**, and
@@ -141,8 +141,8 @@ electrical configuration. Its semantics must not be assumed for a binary collect
 Automatic Wi-Fi recovery is opt-in and rate limited; it cannot reset a module
 that has no usable connection to the bridge.
 
-An AT session alone does not prove a Modbus payload: external AT-family collectors
-also carry PI30 or G-ASCII. This baseline supports the documented Modbus path only.
+An AT session alone does not prove a Modbus payload: AT-family collectors can also
+carry PI30 or G-ASCII. The selected profile determines the inverter payload decoder.
 
 ## 5. Binary EyeBond transport
 
@@ -248,7 +248,7 @@ A profile contains:
 - Read/write capability, documented bounds, dependencies and evidence references.
 - Qualification status by model/firmware; control evidence separate from readings.
 
-### Current implemented map
+### Reference Protocol 4 map
 
 `modbus_protocol_4` uses AT slave 1; binary routes independently qualify slave 1 or 5.
 It defines these telemetry blocks, as
@@ -265,9 +265,9 @@ datetime is managed through the separate clock-sync feature.
 
 Automatic admission currently accepts **register 184 = 4 and register 171 = 32771**.
 Signatures 4/32768 and 4/33793 remain experimental and are not silently enrolled by
-the original exact gate. The new recognizer can offer the common `smg_4` profile
+the exact reference gate. Recognition can offer the common `smg_4` profile
 for them, or an unknown model with matching protocol/read evidence, for explicit
-acceptance. Its subset is distinct from the original full 32771 reference. A known
+acceptance. Both IDs use the same map; the qualification evidence differs. A known
 register layout is not blanket hardware-write qualification.
 
 Implementation anchors:
@@ -277,7 +277,7 @@ Implementation anchors:
 
 ### Model evidence matrix
 
-| Exact model / installation | Transport/map evidence | Bridge status at this baseline |
+| Exact model / installation | Transport/map evidence | Current support |
 | --- | --- | --- |
 | ANENJI ANJ-11KW-48V-W-P reference installation | AT/raw RTU, 4/32771 | Current hardware-read reference; write failure boundaries are extensively simulated, not blanket physical qualification |
 | Sandisolar SD 11KP48V WIFI | External AT session and 4/32771; another local callback session was binary-framed | Strong additional candidate; not independently tested with this Bridge |
@@ -307,7 +307,7 @@ warning. Wire encoding limits are not manufacturer operating limits. All backend
 entry points use the same availability checks and durable operation journal.
 
 Effective editability intersects current-session evidence, implemented commands
-and saved profile permission. The binary 32771 reference now supports implemented
+and saved profile permission. The binary 32771 reference supports implemented
 Protocol 4 setting writes after current-session qualification; accepted profiles expose source-defined controls
 after the warning. Permission is bound to the profile definition digest/signature/
 route; it survives restart but is not silently carried to changed evidence. Binary
@@ -340,8 +340,8 @@ size and hashes, then reruns analysis/framing/inner validation without executing
 archive contents, extracting paths or contacting a collector. No guessed route
 rewrite or map is automatically admitted from a report.
 
-No binary hardware is available to the project. Initial support will be
-source-derived and tested with fixtures. Community reports will establish actual
+Binary support is source-derived and tested with fixtures. It has no project
+hardware qualification. Community reports can establish actual
 model/firmware compatibility. Reports must support offline reproduction without
 executing user-supplied code. Raw unknown payloads may contain hardware identifiers;
 their inclusion must be described separately from ordinary redacted diagnostics.

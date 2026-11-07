@@ -1,8 +1,7 @@
 # Development workflow
 
 Read the [project overview](../../README.md), [documentation index](../README.md)
-and [active decisions](decisions.md). This is an implemented development candidate,
-not an empty skeleton. Current release/qualification status is in
+and [technical principles](decisions.md). Current release/qualification status is in
 [verification](../verification/README.md).
 
 ## Actual source layout
@@ -18,15 +17,15 @@ custom_components/solar_inverter_bridge/
   core/session.py                            Collector ownership, polling and execution
   core/transport.py, binary.py, framing.py    Transport adapters and codecs
   core/catalogue.py, drivers.py, discovery.py Profile maps and recognition
-  core/parameters.py, telemetry.py           Original reference map/codecs
+  core/parameters.py, telemetry.py           Reference map/codecs
   core/storage.py                           Worker-owned SQLite ledger
   core/compatibility.py, artifact.py          Reports/replay and build identity
   frontend/                                 Bundled JS, CSS, HTML and domain catalog
   brand/, translations/                     Local artwork and en-US strings
 ```
 
-There is no separate frontend compilation framework or old application process.
-The bundled assets run directly through HA. Developer browser dependencies belong
+The bundled assets run directly through HA without a separate frontend compilation
+framework. Developer browser dependencies belong
 to `tests/`; they are not shipped as runtime libraries.
 
 ## Environments
@@ -49,7 +48,7 @@ on a developer's private installation files.
 ## Change boundaries
 
 - Keep HA imports and lifecycle handling in the adapter layer. Pure protocol code
-  must run offline without HA or the predecessor's source tree.
+  must run offline without HA or another project's source tree.
 - Do not add blocking SQLite/filesystem work to the event loop. Use the existing
   worker/executor boundaries and preserve cancellation bookkeeping.
 - Add profiles with pinned source facts and independent fixtures. The catalog
@@ -67,12 +66,10 @@ component, MPL license, full inherited notices and four public user guides. Sour
 and installed component fingerprints share `core/artifact.py`. Root documentation
 is not part of the runtime fingerprint.
 
-Only run packaging when requested or when the applicable task permits it. A local
-build is not publication. A public repository, codeowners/maintainer metadata,
-remote and release authorization must be established separately. The existing
-local Git history contains earlier private/Russian documents; moving current files
-does not remove them from history. Follow [publication policy](documentation-policy.md).
+Only run packaging when requested or when the applicable task permits it.
+Publication requires explicit authorization and a reviewed source tree. Follow
+[documentation policy](documentation-policy.md).
 
-The prepared GitHub/HACS metadata, clean-source export boundary and mandatory
-pre-release documentation review are described in [publication](publication.md).
+GitHub/HACS metadata, release checks and the mandatory pre-release documentation
+review are described in [publication](publication.md).
 Default CI runs build-free tests; packaging and publication remain explicit steps.

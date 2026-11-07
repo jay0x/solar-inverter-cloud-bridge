@@ -9,14 +9,12 @@ for the current support matrix and experimental binary limitations. The referenc
 in the manual-install ZIP and maintained with the GitHub source.
 
 The [profile guide](PROFILE_EXPANSION.md) describes recognition and the implemented
-settings. Candidate 0.8.2 includes the 0.8.0 protocol expansion and the new product
-name; the completed 24-hour observation baseline is 0.4.0. An installation archive
-has not been built for this candidate. Cloud branding does not require a cloud
-account or change the integration's local operation.
+settings. Current version: 0.8.2. Installation is available through HACS or the
+reviewed source tree. Collector communication runs locally without a vendor-cloud account.
 The [named-model and family register](DEVICE_COMPATIBILITY.md) includes experimental
 and unresolved devices with sources and transport qualifications. If the standard
 read-only check fails, bounded recognition tries available families. Review the
-proposal and preview before explicitly accepting it. Since 0.6.0, acceptance covers
+proposal and preview before explicitly accepting it. Acceptance covers
 readings and implemented writable settings together. There is no separate control
 enable switch or mode selection. Acceptance itself sends no setting command.
 
@@ -72,13 +70,12 @@ HACS installs the component directory from the repository; a custom release ZIP
 is not required. Inclusion in HACS's default catalog is a separate submission.
 Home Assistant Core 2026.10.4 remains the tested minimum.
 
-### Updating an existing installation after the rename
+### Updating an installation
 
-Keep the existing `solar_inverter_bridge` integration and its data directory.
-The default config-entry title updates to Solar Inverter Cloud Bridge; a custom
-title is preserved. The sidebar remains **Inverters**, and existing entity IDs,
-service names, panel URL, device names, ledger and Recorder history are retained.
-There is no need to remove and re-add the integration.
+Use HACS to update the `solar_inverter_bridge` integration, then restart Home
+Assistant. Keep its data directory and config entry. Device/entity IDs, names,
+maintenance preferences, the ledger and Recorder history should remain intact.
+Check that the collector reconnects and produces fresh readings after the update.
 
 ## Use the interface
 
@@ -196,27 +193,12 @@ registry; renaming a device there does not require editing the bridge database.
 The config entry stores allowed collector sources and an optional bootstrap preference. Do not edit HA's `.storage`
 files. A database that fails `quick_check` is not opened.
 
-Version 0.3.0 upgrades the bridge ledger from schema 1 to 2, adding only qualified
-logical routes. Device/entity IDs, names, modes, clock/recovery preferences and
-unresolved operations are retained. A changed route increments policy revision;
-it does not replay commands. Keep a consistent pre-upgrade backup: old 0.2 code
-refuses schema 2, so reverting files alone is not a database downgrade.
-
-Version 0.4.0 upgrades to schema 3, adding explicit profile acceptance and control
-permission. The stored binding includes a digest of the map/control definitions,
-observed signature, transport and route. Changed evidence refuses execution and
-requires a fresh reviewed binding; permission changes increment policy revision.
-Existing baseline devices and unresolved operations are preserved. Keep the
-consistent pre-upgrade backup for any downgrade; older code refuses schema 3.
-
-Version 0.6.0 upgrades to schema 4 and retires Monitoring/Control/Advanced modes.
-Existing accepted profiles gain the same full-control policy as new devices;
-their identity/definition binding is retained and still checked before writing.
-Maintenance preferences, device IDs and parameter entity IDs are preserved. The
-obsolete HA control-mode selector and `set_mode` action are removed. Existing
-automations calling that action should remove the obsolete mode-setting step.
-No command is replayed by migration. Downgrade requires the consistent pre-upgrade
-ledger backup; older code refuses schema 4.
+The ledger uses schema 4. Profile acceptance binds the device to the map/control
+definitions, observed signature, transport and route. Changed evidence requires
+a new read check and explicit acceptance. Policy changes increment a revision;
+they never replay commands. Keep a consistent backup before an update. Software
+that does not support the saved schema cannot use that database; replacing code
+alone is not a database downgrade.
 
 Home Assistant's backup platform calls this integration before and after copying
 config. The bridge checkpoints its SQLite WAL and freezes its own writer for that
@@ -285,9 +267,8 @@ but the new address must still pass its allowlist.
 
 ## Native Home Assistant controls and recovery
 
-The Bridge inverter tabs are **Overview**, **Sensors**, **Configuration**,
-**Connection**, and **Activity**. Configuration replaces the former Settings label;
-existing `/settings` links continue to work.
+The inverter tabs are **Overview**, **Sensors**, **Configuration**,
+**Connection**, and **Activity**.
 
 **Sensors** lists the device's real HA sensor names, entity IDs, current values,
 and units. Select **History** to open HA's native entity dialog and Recorder graph.

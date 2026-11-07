@@ -1,56 +1,45 @@
 # GitHub and HACS publication
 
-## Prepared identity and current status
+## Identity and current status
 
 - Product: **Solar Inverter Cloud Bridge**.
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
-- Technical integration domain and component directory: `solar_inverter_bridge`.
+- Integration domain and component directory: `solar_inverter_bridge`.
 - Current candidate: **0.8.2**, panel **0.16.1**, ledger schema **4**.
-- Local operation and the tested minimum Home Assistant version, **2026.10.4**,
-  are unchanged by the name. Cloud does not imply a hosted service.
+- Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
-The public repository was created from a reviewed clean source export. The
-manifest's documentation/issue URLs point to it. No GitHub release or HACS
-default-catalog listing exists yet. Hosted validation and HACS installation results
-are recorded in the verification guide; workflow presence alone is not a passing run.
+The public repository is available as a HACS custom repository. There is no stable
+GitHub release or default-catalog listing. Current checks and installation evidence
+are in [verification](../verification/README.md).
 
 ## Repository contents and installation
 
-HACS installs the one integration under `custom_components/solar_inverter_bridge`.
-Its runtime assets, translations and brand images are inside that directory.
-`hacs.json` names the product and sets the minimum HA version. No `zip_release`
-mode is configured: the manual-install ZIP layout is not a HACS ZIP layout.
+HACS installs the single integration under `custom_components/solar_inverter_bridge`.
+All runtime assets, translations and brand images are inside that directory.
+`hacs.json` supplies the product name and minimum HA version. No `zip_release` mode
+is configured: the manual-install ZIP layout is not a HACS ZIP layout.
 
-The public source includes the component, tests, tools, public documentation,
-README, license/notices, HACS metadata and GitHub workflow/issue templates.
-Exclude private evidence/access files, local databases, caches and generated outputs.
-Use an explicit reviewed source list, including intended untracked source files.
-
-The existing local Git history contains earlier private working documents. Its
-default branch must not be pushed as the initial public repository. For the first
-publication, prepare a separate reviewed source export and start a clean public
-history there, retaining copyright and provenance notices. Keep the local history
-intact. Creating that export/repository, committing and pushing require the owner's
-publication instruction. `git archive HEAD` is not a substitute for reviewing the
-current candidate because current work may not be committed.
+Public source includes the component, tests, tools, public documentation, license
+notices and GitHub metadata. Exclude private access/evidence files, databases,
+caches and generated outputs. Review both tracked and intended untracked files.
 
 ## Required pre-release documentation review
 
-Recheck documentation against the **exact source fingerprint to be released**, even
-if an earlier candidate passed review. Record results in the verification guide.
+Recheck documentation against the **exact source fingerprint to be released**.
+Describe current behavior and qualification without internal development chronology.
 
 | Area | Compare against |
 | --- | --- |
-| Product name, version, HA minimum and URLs | `manifest.json`, `hacs.json`, panel cache/version and actual repository |
-| Installation, upgrade and rename | Config flow, setup/title migration, component layout and preserved IDs |
-| Collector routing and protocols | Listener/admission code, supported transports and required network configuration |
+| Product name, version, HA minimum and URLs | `manifest.json`, `hacs.json`, panel version and actual repository |
+| Installation and updates | Config flow, component layout, saved data and preserved IDs |
+| Collector routing and protocols | Listener/admission code and required network configuration |
 | Profile/readings/control counts | `core/profile_catalog.py`, `catalogue.py` and `drivers.fields_for()` |
-| Controls and failure behavior | Durable executor, readback/reconciliation, native entities and administrator checks |
-| Hardware claims and gaps | Verification evidence; distinguish source-derived, synthetic and physical-device results |
+| Controls and failure behavior | Executor, readback/reconciliation, native entities and administrator checks |
+| Hardware claims and gaps | Synthetic, installation and physical-device evidence |
 | License/provenance | MPL license, inherited MIT notice and pinned source references |
-| Links and examples | Public checkout, published documentation/issue URLs and installation examples |
+| Links and examples | Public checkout, documentation/issue URLs and installation instructions |
 
-Current inventories can be read without packaging or hardware access:
+Read inventories and validate documentation without packaging or hardware access:
 
 ```bash
 python -c 'from custom_components.solar_inverter_bridge.core.profile_catalog import catalogue_view; print([(p["profile_id"], p["measurements"], p["controls"]) for p in catalogue_view()])'
@@ -58,33 +47,26 @@ python tools/check_docs.py
 git diff --check
 ```
 
-The documentation checker validates links, language placement and license digests;
-it does not establish semantic agreement or audit all historical secrets. Review
-the content and export separately. Do not turn historical verification records into
-current claims by globally replacing their versions.
+The checker validates links, language placement and license digests. Semantic
+agreement with the code and the scope of hardware claims still require review.
 
-## Checks and publication sequence
+## Release checks
 
-1. Finish the documentation review above and the build-free suites in
-   [testing](testing.md). Confirm a fresh test-installation snapshot, source hashes,
-   retained IDs/preferences and read-only UI acceptance for the final candidate.
-2. On the owner's publication instruction, create the clean public repository with
-   Issues enabled. Suggested description: **Local Home Assistant integration for
-   EyeBond-connected solar inverters, with native sensors and verified settings.**
-   Suggested topics: `home-assistant`, `hacs`, `solar`, `inverter`, `eybond`, `modbus`.
-3. Push only the reviewed export. Run **Test candidate** and **Validate integration
-   metadata**. The latter runs Hassfest and the official HACS action; fix failures
-   without suppressing required checks. Verify the documentation and issue URLs.
-4. Test installing the public repository as a HACS custom repository in an authorized
-   isolated HA installation. Source deployment is not proof of HACS installation.
-5. When release publication is requested, use a version matching the manifest
-   (for example `v0.8.2`) and publish a GitHub Release with accurate changes and
-   limitations. A tag alone is not a release. A manual ZIP is optional and must be
-   explicitly authorized/tested; no workflow automatically builds or publishes one.
-6. A public custom repository can be added to HACS before default-catalog inclusion.
-   Submit it for inclusion separately after meeting the current submission rules.
+1. Finish the documentation review and applicable suites in [testing](testing.md).
+   Verify source hashes, retained IDs/preferences and UI behavior on an authorized
+   test installation, with a fresh snapshot before changes.
+2. On publication authorization, push the reviewed changes. Run **Test candidate**
+   and **Validate integration metadata**. Fix failures without suppressing required
+   checks. Verify documentation and issue URLs, repository description and topics.
+3. Verify HACS installation of the intended candidate. Source deployment alone is
+   not proof that HACS can install it.
+4. When release publication is requested, use a tag matching the manifest version
+   and publish a GitHub Release with supported features and limitations. A tag
+   alone is not a release. A manual ZIP is optional and requires explicit build
+   authorization and verification; workflows do not automatically publish one.
+5. Default HACS catalog inclusion is a separate submission under its current rules.
 
-Official references (reviewed November 7, 2026):
+## Official references
 
 - [General HACS requirements](https://www.hacs.xyz/docs/publish/start/)
 - [Integration requirements](https://www.hacs.xyz/docs/publish/integration/)

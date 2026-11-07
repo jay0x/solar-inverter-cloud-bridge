@@ -47,8 +47,8 @@ AT on 38899 stays auxiliary; it is not promoted into another inverter poller.
 Failed binds are reported separately while healthy listeners remain available.
 All-listener failure refuses setup; no random fallback port is chosen.
 
-The 0.5.0 raw-AT adapter restores a conservative 50 ms receive-to-next-send gap
-used by the predecessor. The gap is inside the existing absolute deadline. Queued
+The raw-AT adapter enforces a 50 ms receive-to-next-send gap inside the
+absolute transaction deadline. Queued
 unsolicited raw bytes are retained for evidence and invalidate the session rather
 than being accepted as a reply to an unsent request. Binary sessions keep their
 single-reader/TID dispatch and do not use this raw-session guard.

@@ -1,16 +1,14 @@
 # Source provenance and licensing
 
-Solar Inverter Cloud Bridge is MPL-2.0. The original MIT copyright/permission notice for
-inherited InverterLocalBridge portions is retained in full in
-[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md). The predecessor is not a runtime
-dependency. Its credentials, databases, private captures and process/backend are
-not imported by the integration.
+Solar Inverter Cloud Bridge is MPL-2.0. Required third-party copyright and permission
+notices, including the MIT notice for inherited portions, are preserved in
+[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
 
 ## Protocol sources
 
 | Source | Pinned evidence and boundary |
 | --- | --- |
-| [SRNE Modbus v1.96 document](https://github.com/syssi/esphome-smg-ii/blob/b0ff1caec3ce395d774fcf496fcc03a75f925ca2/docs/SRNE.Solar.Charge.Inverter.MODBUS.Protocol1.96.pdf) | Primary facts used by 0.8.0: unsigned voltage/frequency/power, phase-A scope, positive-discharge current, per-12-V battery settings and 32-register read limit. Rated-voltage text is read-only despite a conflicting table annotation |
+| [SRNE Modbus v1.96 document](https://github.com/syssi/esphome-smg-ii/blob/b0ff1caec3ce395d774fcf496fcc03a75f925ca2/docs/SRNE.Solar.Charge.Inverter.MODBUS.Protocol1.96.pdf) | Unsigned voltage/frequency/power, phase-A scope, positive-discharge current, per-12-V battery settings and 32-register read limit. Rated-voltage text is read-only despite a conflicting table annotation |
 | [mpp-solar protocol documents](https://github.com/jblance/mpp-solar/tree/eafdd4328c77f516cf82430c5bcb6fa042c45d3a/docs/protocols) | PI18 20170926, PI30 20150924 and PI30MAX 20210217 primary documents. Paired setters, units, command case and current-unit addressing take precedence over inconsistent library labels |
 | [Solar2MQTT](https://github.com/softwarecrash/Solar2MQTT/tree/4390ab343e6546d3a37c0067d8f5eddcbe48ce53) | Protocol reference, protocol PDFs and example replies; independent cross-reference, not a runtime dependency or evidence that every UART/RS485 family supports our collector transport |
 | [MUST protocol documents](https://github.com/vladyspavlov/esphome-must-inverter/tree/e3c43a4915901dcc399dc2ac68eb7a5eb36a426d/docs) | Primary spreadsheets 1.4.3 and 1.4.15; energy high word is 1000 kWh, low word 0.1 kWh, not binary uint32. Battery current 25274 is in A |
@@ -44,31 +42,22 @@ links with the fields/models they justify rather than duplicating whole catalogs
 - Review the license before copying any actual implementation. Protocol research
   is not permission to redistribute source or vendor documents under another license.
 
-New adapters/maps and register/ASCII fixtures are independently written from these
-facts. No additional hardware capture was relabeled as project-owned evidence.
-Detailed original local import hashes and research transcripts remain private history.
+Adapters/maps and register/ASCII fixtures are independently written from protocol
+facts. Synthetic specimens are not hardware captures.
 
-The November 7, 2026 family review is summarized in the
-[profile guide](../PROFILE_EXPANSION.md#protocol-family-review--november-7-2026).
-The 2024 document explicitly lists protocol numbers 3/4/5/6 despite its "3-10"
-filename. The pinned SmartESS catalog and HEAD `88436d8629ef72835b4aae95297aa9332c51d11e`
-both specify 0912 telemetry FC04/address4 versus 0921 FC03/address1. Those are
-source-derived facts, not new hardware results. Version 0.7.0 corrects 0912 and
-checks the actual FC04/slave4 request plan independently, with original-wire replay.
-Paxy's reviewed decoder handles 0925 and
-does not independently qualify 0912 or 0921.
+## Protocol interpretation
 
-The [remaining-family audit](../PROFILE_EXPANSION.md#remaining-family-audit--november-7-2026)
-compares the other 15 entries with the pinned register/control/command schemas.
-In particular, `profiles/eybond_g_ascii/base.json` has 22 capability definitions;
-the earlier zero-control subset was an implementation gap. Version 0.8.0 implements
-those 22 setting-specific grammars/readbacks. MUST schemas inherit one base, whereas Deye LV/high-map and the four
-ASCII payload families are not interchangeable. Source counts are not manufacturer
-coverage percentages. Additional independent projects located were kellerza/sunsynk,
-rany2/spf5000es-server and Pho3niX90/solis_modbus; their existence does not qualify
-our selected maps or a different logger transport.
+The [profile guide](../PROFILE_EXPANSION.md#protocol-map-distinctions) explains
+map and command differences. The native document named "3-10" explicitly lists
+3/4/5/6. The pinned SmartESS catalog specifies 0912 FC04/slave4 versus 0921
+FC03/slave1; source evidence for 0925 does not independently qualify those maps.
 
-The current expansion is independently implemented in `core/extended_maps.py`,
+`profiles/eybond_g_ascii/base.json` defines 22 setting capabilities with specific
+grammars/readbacks. MUST schemas share a base, while Deye LV/high maps and the ASCII
+payload families are not interchangeable. Source counts are not manufacturer
+coverage percentages, and another project's logger transport is not implicitly supported.
+
+Measurement and setting definitions are implemented in `core/extended_maps.py`,
 `core/modbus_settings.py`, `core/ascii_settings.py` and `core/ascii_telemetry.py`.
 Their field tables use the pinned donor paths in the profile guide, reconciled with
 the primary documents above. In particular, PI18 total ET is kWh despite a library
@@ -82,11 +71,10 @@ verified writable map. Deye high register 653 retains a raw label without an ass
 power unit where scale is ambiguous. No additional profile has local hardware-write
 qualification. Synthetic executor tests establish software behavior, not electrical effects.
 
-The 0.5.0 09C1 implementation uses fixed-column facts from the pinned
+The 09C1 implementation uses fixed-column facts from the pinned
 `payload/urtu09c1.py` and `drivers/eybond_09c1.py` references. No address byte,
-checksum, unique retail identity or writable map is inferred. Expanded controls
+checksum, unique retail identity or writable map is inferred. Controls
 were checked against the protocol-specific SMG profiles, MUST PV/PH18 profile and
 PI30 setting/readback definitions. Model-dependent voltage limits are not imported
 from another battery-voltage grade. The raw-session 50 ms turnaround and queued-byte
-guard preserve a behavior documented in the MIT predecessor's continuous reader;
-the new implementation uses the existing async adapter/deadline boundaries.
+guard operate within the async adapter's whole-transaction deadline.

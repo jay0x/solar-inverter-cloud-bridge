@@ -1,77 +1,52 @@
 # Documentation and publication policy
 
-## Placement and language
+## Language and scope
 
-All public project documents use **American English (en-US)**, including root
-README/agent instructions, guides, source notices and issue templates. Product
-strings are also en-US; HA's technical locale key may remain `en`.
+Public documents, UI strings and code examples use **American English (en-US)**.
+Communication with the project owner is in Russian. Russian-language and non-public
+working documents belong in ignored `docs/private/`.
 
-Every document containing Russian text belongs in **`docs/private/`**. This includes
-existing Russian documents and any document the owner explicitly requests in Russian.
-Non-public documents belong there even when written entirely in English: installation
-notes, local handoffs, agent task briefs, private source discussions and detailed logs.
-Conversation with the owner may remain in Russian.
+Public materials describe **Solar Inverter Cloud Bridge as it exists now**:
+capabilities, compatible devices, setup, operation, architecture and qualification.
+Do not include unpublished product names, internal version milestones, development
+timelines, canceled plans or migration stories for unpublished versions.
+Manufacturer protocol revisions and required source/license attribution remain
+part of the technical documentation.
 
-The separate root `private/` directory stores credentials, captures, databases,
-screenshots and generated deployment/observation state. Do not move those into a
-documentation archive or print them while reorganizing documents.
+## Document ownership
 
-## Public document ownership
-
-- `README.md`: entry point, product scope and navigation.
-- `docs/README.md`: public documentation map.
-- Four stable user guides in `docs/`: installation, device compatibility, protocol
-  reference and profile expansion. They are also packaged for manual installation.
+- `README.md`: product overview, models/protocols, installation and routing summary.
+- `docs/README.md`: documentation index.
+- Four user guides in `docs/`: installation, device compatibility, protocols and
+  profile recognition/control. They are included in the manual installation package.
 - `docs/development/`: current implementation contracts and contributor guidance.
-- `docs/verification/`: dated public evidence summaries with methods and limitations.
+- `docs/verification/`: checks and qualification of the current product, with clear
+  distinctions between synthetic tests, installation evidence and hardware results.
 
-Do not maintain parallel current STATUS, WORK_PLAN, PRODUCT and NEXT_AGENT narratives.
-Update the guide that owns the topic. Put local next steps in the private handoff.
-Label a proposal as a proposal and a historical report as historical, never as
-present-tense implementation status.
+Update the guide that owns a topic. Avoid duplicate status or planning documents.
+Keep internal notes, detailed installation logs and development chronology local.
 
-## What happened to reports and old plans
+## Private material
 
-The former top-level `reports/` directory is retired. Useful verification conclusions
-are summarized in `docs/verification/README.md`; detailed original reports and
-benchmark JSON live under `docs/private/archive/reports/`.
+`docs/private/` holds local working notes. The separate root `private/` directory
+holds credentials, captures, databases, screenshots and deployment state.
+Neither directory is a public-checkout dependency or package input. Never include
+credentials, serials, household network details or raw private captures in public guides.
 
-Original mixed-language plans, local research logs and obsolete implementation
-briefs were retained under `docs/private/archive/docs/`, with historical banners.
-The private archive retains the old docs/reports relationship for source navigation.
-Small pointers lead from archived user-guide names to their current public versions.
-Root documents with Russian text were also preserved there before being rewritten.
+Public documents must not link to private material. Source and evidence URLs should
+identify the exact document, revision or commit supporting a technical claim.
 
-Public technical content was consolidated, not merely moved out of sight: runtime
-and HA boundaries are in architecture, policy/ledger behavior in control/storage,
-UI requirements in frontend, evidence/provenance in testing/sources/verification.
-Unselected old wireframes, canceled procedures and installation transcripts remain
-history and are not instructions to resume those tasks.
+## Verification and publishing
 
-## When a public verification report is useful
+Before release, compare documentation with the exact candidate as described in
+[publication](publication.md). Record the current software version, method, result
+and qualification limits. A running observation is not a passed stability test.
 
-Keep a report when it adds reproducible evidence: candidate fingerprint/revision,
-environment, method, results and explicit limits. It must be en-US and must not
-contain household addresses, credentials, serials, private filesystem paths or raw
-captures. Keep full local artifacts privately and publish only reviewed summaries.
-Do not publish every agent session transcript or duplicate a passing-test count
-across multiple guides. A running observation is not a completed result.
-
-## Git and package boundaries
-
-`docs/private/` is ignored. Public documents must not have required links into it;
-a public checkout must remain usable without local history. Optional private paths
-may be mentioned in code formatting for local maintainers, but not as dependencies.
-The release builder uses an explicit public-document allowlist, never a recursive
-`docs/` or `reports/` glob.
-
-Ignoring or moving current files does **not** erase their older versions from Git
-history. Earlier local commits already contain Russian/installation-specific
-documents. Before publishing, review the actual history/export and use an explicitly
-agreed clean public export/history. Do not rewrite history, add a remote, push or
+Review the full intended Git change and package contents before publication. Ignore
+rules alone do not remove tracked material. Do not commit, push, rewrite history or
 publish automatically during documentation cleanup.
 
-Validate with `python3 tools/check_docs.py`. It checks Cyrillic placement, local
-targets/reference definitions, license integrity, forbidden public/private links,
-and the package's planned document links without building an archive. Use
-`--include-private` to additionally validate local archive navigation when present.
+Run `python3 tools/check_docs.py` and `git diff --check`. The checker validates local
+links, language placement, license integrity and planned package links without
+building an archive. Its secret/path heuristics are limited; it does not replace a
+source review. Optional local private links can be checked with `--include-private`.

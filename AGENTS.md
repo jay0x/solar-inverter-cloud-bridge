@@ -11,9 +11,9 @@
   `docs/private/`, including documents the owner explicitly requests in Russian.
   Do not publish, stage or package that directory. Follow
   `docs/development/documentation-policy.md` for documentation changes.
-- Historical plans and agent conversations are not current implementation status
-  or inherited permission to change hardware. The active technical decisions are
-  summarized in `docs/development/decisions.md`.
+- Public materials describe the current product. Do not include unpublished product
+  names, internal development stages, private deployment timelines or decision logs.
+  Current technical rules are summarized in `docs/development/decisions.md`.
 
 ## Product and implementation boundaries
 
@@ -27,15 +27,14 @@
   replays writes. New writes require durable intent and independent readback.
 - Manual control requires an active HA administrator context. All callers share
   the same executor, profile, baseline and current-session checks.
-- D27 supersedes the old three-mode policy: implemented writable parameters are
-  available by default. Do not reintroduce Monitoring/Control/Advanced selectors
-  or a separate experimental-control switch. Preserve maintenance preferences.
+- Implemented writable parameters are available by default. Do not add control-mode
+  selectors or a separate experimental-control switch. Preserve maintenance preferences.
 - Keep the full implemented parameter inventory visible, explaining hardware
   read-only, unsupported writes, missing readings and unresolved-operation barriers.
-- D17: only actual hardware R/O is read-only. Known R/W parameters without
+- Only actual hardware R/O is read-only. Known R/W parameters without
   manufacturer limits can be edited with a warning. Preserve exact
   scaling, encoding, known bounds and dependencies; wire limits are not operating limits.
-- D25–D26: offer source-derived profiles for unlisted models based on actual read
+- Offer source-derived profiles for unlisted models based on actual read
   evidence. Inferred compatibility may use implemented source-defined controls
   after explicit profile warning/acceptance. Bind acceptance to the profile definition and
   fresh evidence; do not guess write addresses or enable unimplemented controls.
@@ -58,8 +57,8 @@
 - Read the local HA-access instructions before live access. Snapshot affected state,
   preserve user changes, use the existing deployment mechanism and read back results.
   Deploy requested UI changes to the authorized test instance after verification.
-- Embedded DNS was declined; storage ownership was retained; the manual WAN-loss
-  task was canceled. Do not reinstate them from an archived document.
+- DNS configuration belongs to the router or local resolver, not an embedded service.
+  Network disruption tests require explicit task scope.
 - Preserve provenance, copyright and third-party notices. The project is MPL-2.0;
   original MIT terms for inherited portions remain in `THIRD_PARTY_NOTICES.md`.
 

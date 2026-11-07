@@ -77,7 +77,7 @@
     <p>With DNS-only or shared subnet rules, a fixed collector IP is less critical. Bridge identifies the collector by its native DTUPN identity, stored as a hash, rather than its IP. A new IP preserves the saved inverter, name, settings, and journal if that source still passes the allowlist. Replacing the Wi-Fi module can change its identity.</p>
     <h2>Verification and rollback</h2>
     <p>Use the generated checks to confirm the DNS answer, rule counters, and fresh readings. Local DNS overrides can affect all clients using that resolver. These recipes cover IPv4 and ordinary DNS, not IPv6 or encrypted DNS.</p>
-    <p>To roll back, remove only the SolarInverterBridge-tagged rules/overrides added by this guide, restore the previous resolver settings, and establish a new connection to the intended owner. Generated commands are configuration recipes; only the user's MikroTik DNS setup has hardware evidence here.</p>
+    <p>To roll back, remove only the rules and DNS overrides you added with this guide, restore the saved resolver settings, and reconnect the collector. Review generated commands against your router's current configuration before applying them.</p>
     <details><summary>Sources and platform support</summary><ul>
       <li><a href="https://help.mikrotik.com/docs/spaces/ROS/pages/37748767/DNS">RouterOS DNS</a></li>
       <li><a href="https://openwrt.org/docs/guide-user/firewall/firewall_configuration">OpenWrt firewall configuration</a></li>

@@ -1,6 +1,6 @@
 # Inverter compatibility and candidate-model register
 
-Reviewed November 7, 2026 against candidate 0.8.1 and the 0.8.0 protocol expansion.
+Compatibility list for the current implemented profiles.
 This is the consolidated list of
 models and families identified in the project's reviewed public sources, including
 experimental and unresolved candidates. It is not a claim to enumerate every OEM
@@ -54,10 +54,10 @@ See [PROFILE_EXPANSION.md](PROFILE_EXPANSION.md) for exact measurement/control c
 | **Gootu GT-H2436M14P5**; alias **Gootu Hybrid 24V 3.6kW** | `g_ascii`; source rating 230 V / 15 A / 24 V / 50 Hz, software 4.007 | External support/proxy evidence. G-ASCII is distinct from PI30 despite both being text [C15] | Expanded experimental monitoring/settings; fresh setting-specific readback required |
 | **MUST PV18-3024** | `must_pv_ph18`, inner slave 4 | Source PV18/PV1800 marker, 19200 8N1 serial side. Our integration does not change the collector's UART configuration [C16] | Experimental common telemetry and 27 source-defined controls; unavailable fields remain unavailable |
 | **MUST-compatible PV3300** | Canonical `must_pv_ph18`; retained alias `must_pv3300`, PV/3300 marker | Whole-percent load differs from the common MUST map. The variant is selected by marker/read evidence, not retail name [C17] | Experimental variant and optional BMS voltage/current/temperature/SOC channels |
-| **DGK DGKINV02-24 6 kW** with **WFBLE.DTU.Bar** | Possible `must_pv3300` association | Earlier research only established the endpoint. The pinned source's PV3300 record now lists this retail alias; require the actual marker/read evidence before accepting that association [C17], [S5] | Experimental candidate; the alias does not prove all DGK units use MUST firmware |
+| **DGK DGKINV02-24 6 kW** with **WFBLE.DTU.Bar** | Possible `must_pv3300` association | The source's PV3300 record lists this retail alias; require actual marker/read evidence before accepting the association [C17], [S5] | Experimental candidate; the alias does not prove all DGK units use MUST firmware |
 | **MUST PV3900**; retail label **MUST PV39-8048 TLV** | Canonical `must_pv_ph18`; retained alias `must_pv3900`, PV/3900 marker | Common MUST conventions and marker-selected optional BMS subset [C18] | Experimental common variant; actual optional channels require valid replies |
 | **Bluesun BSM15K-B** | `hopewind_0237` | External FC03 capture matches Hopewind protocol 0237/567. AC generation is not necessarily household load [C19] | Experimental common readings and three source-defined regulation controls available |
-| **Kevolt PD0080G-TPM-EU**; alias **Kevolt 8 kW Three-Phase Hybrid** | `deye_3ph_high_80kw` internal key; actual source unit is **8 kW** | External type 5 / protocol 0x0104 / rated-power words 80000 raw at 0.1 W. The historical profile key must not be read as an 80 kW retail rating [C20] | Experimental 60-reading/118-control inventory; actual model applicability still requires read evidence |
+| **Kevolt PD0080G-TPM-EU**; alias **Kevolt 8 kW Three-Phase Hybrid** | `deye_3ph_high_80kw` internal key; actual source unit is **8 kW** | External type 5 / protocol 0x0104 / rated-power words 80000 raw at 0.1 W. The profile key does not indicate an 80 kW retail rating [C20] | Experimental 60-reading/118-control inventory; actual model applicability still requires read evidence |
 | **ZL Power GSIII 12 kW / GSIII** | `eybond_09c1`, fixed-column Q1/QF/PV?/F | External 09C1 evidence [C22]; distinct from PI30/G-ASCII/Short-ASCII. Family responses do not uniquely identify a retail model | Up to 24 readings/status fields including optional PV1/PV2; no write commands or new local hardware qualification |
 
 ## 2. Named research candidates not yet claimed as a matching device profile
@@ -70,7 +70,7 @@ are not hidden or rejected just because their retail name is unknown.
 | **ANENJI ANJ-HHP-II-6.2KP-WIFI** | External native-cloud binary EyeBond to `ess.eybond.com:502` [S6] | Our binary envelope is implemented; the exact inverter payload/map must match a proposal or be added from a report |
 | **EM11000, reported 11 kW installation** | Binary reported on `vip1.eybond.com:18899` and 502; exact manufacturer/SKU is not established [S7] | Reliable original exchange and native signature. Some issue examples were reconstructed with bad CRCs and cannot serve as captures |
 | **Vevor EM3500-24L**, integrated Wi-Fi | DNS names `iot3.eybond.com` and `dtu_ess.eybond.com` reported [S8] | Collector dialect, port and inverter map; DNS alone is not protocol evidence |
-| **EASUN SMG II 8 kW / 11 kW** | Related register-map sources and the project predecessor [S9] | Exact SKU, firmware, collector session and native signature. Existing SMG maps may fit; no blanket family hardware claim |
+| **EASUN SMG II 8 kW / 11 kW** | Related register-map sources [S9] | Exact SKU, firmware, collector session and native signature. Existing SMG maps may fit; no blanket family hardware claim |
 | **Yingfa YF6.2K-2K-LEL-IF** | An owner reports the model, but the formerly attributed PI30 capture actually belonged to Sumry devices [C21] | Correct evidence for this particular Yingfa; do not borrow support from YF6.2K-LEL-1B |
 | **Sumry devices from the corrected Yingfa report**, exact SKUs unspecified | External PI30 evidence was reattributed to Sumry [C21] | Exact retail models; common PI30 can be tested, but the source does not justify inventing SKU names |
 

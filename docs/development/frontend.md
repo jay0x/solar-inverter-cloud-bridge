@@ -7,7 +7,7 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 ## Navigation and editing
 
 - Device tabs are **Overview → Sensors → Configuration → Connection → Activity**.
-  Existing `/settings` deep links continue to address Configuration.
+  The `/settings` route opens Configuration.
 - The list opens device Overview; Configuration shortcuts open the settings view.
   **All inverters** and reselecting the sidebar item return to the list.
 - Parameter rows show one observed value. Editing creates a draft; Apply becomes
@@ -49,8 +49,8 @@ history; an entity without a current HA state cannot open more-info.
 
 The **Home Assistant entities** link uses the actual HA device-registry ID, not the
 bridge's enrollment UUID. HA's native device page has fixed entity categories;
-an integration cannot create an arbitrary extra section header there. Mode and
-maintenance entities therefore use the normal Configuration category.
+an integration cannot create an arbitrary extra section header there. Parameter and
+maintenance entities use the normal Configuration category.
 
 ## First-inverter setup
 

@@ -88,4 +88,3 @@ actual results. Do not send resets or electrical/schedule writes just to prove a
 
 A completed fixed-candidate observation needs an unchanged fingerprint and a final
 recorded result. A running or interrupted process is not a passed 24-hour test.
-The canceled manual WAN-loss task is not an active acceptance requirement.

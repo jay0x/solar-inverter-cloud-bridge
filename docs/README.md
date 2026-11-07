@@ -1,7 +1,7 @@
 # Documentation
 
 Public documentation is written in **American English (en-US)** and describes the
-current candidate, not an accumulation of agent plans. Start with the guide for
+current product. Start with the guide for
 your task; each topic has one primary document.
 
 ## Users
@@ -26,10 +26,10 @@ installation package. Developer guides remain in the source repository.
 | [Diagnostics](development/diagnostics.md) | Capture, analysis, privacy, export and offline replay |
 | [Frontend](development/frontend.md) | UI behavior, accessibility, entity history and branding |
 | [Testing](development/testing.md) | Check selection and reproducible commands |
-| [Decisions](development/decisions.md) | Active product/technical decisions and retained decision IDs |
+| [Technical principles](development/decisions.md) | Current product and implementation rules |
 | [Sources](development/sources.md) | Provenance, pinned external evidence and license boundaries |
-| [Documentation policy](development/documentation-policy.md) | Public/private placement, language, archives and publishing |
-| [GitHub and HACS publication](development/publication.md) | Prepared identity, clean export, mandatory documentation review and release sequence |
+| [Documentation policy](development/documentation-policy.md) | Current-product scope, public/private placement, language and publishing |
+| [GitHub and HACS publication](development/publication.md) | Repository metadata, mandatory documentation review and release checks |
 
 ## Verification evidence
 
@@ -46,6 +46,5 @@ reports. It is optional and will be absent from a normal public checkout. Access
 files, raw captures, databases and deployment snapshots remain in the separate
 ignored root `private/` directory; they are not documentation.
 
-Historical decisions and implementation briefs were consolidated into the guides
-above. They are not competing current instructions. See the documentation policy
-for the archival mapping and treatment of existing Git history.
+Public guides contain current usage, implementation contracts and relevant evidence.
+Internal development chronology belongs in local working notes.

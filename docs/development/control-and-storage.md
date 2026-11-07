@@ -2,9 +2,9 @@
 
 ## Full control and effective availability
 
-Since 0.6.0, implemented writable settings are available by default. The owner
-removed Monitoring/Control/Advanced classification and the separate experimental
-control switch. New and migrated devices use the same full-control policy.
+Implemented writable settings are available by default under one full-control
+policy. Effective availability is determined by the field, transport, current
+readings and profile acceptance.
 
 All manual command interfaces require an active HA administrator context. A missing
 user context does not authorize an external system caller. Native entities, services
@@ -81,16 +81,11 @@ Current software bounds: 16 saved devices, 100,000 retained operation IDs, 16 qu
 active command callers per device, 64 overall and a 64-job database queue. UUIDs are
 not automatically purged to bypass deduplication. Journal export is paginated.
 
-Schema 2 introduced qualified logical routes. Schema 3 added profile acceptances and
-control permission. Schema 4 retires all three modes, normalizes the retained legacy
-`control_mode` column to `full`, and enables implemented controls for already accepted
-profiles without changing their definition/signature binding. Each migrated device's
-policy revision increases once. IDs, maintenance flags and unresolved work remain.
-Unsent commands are not replayed. The obsolete HA mode selector is removed through
-the entity registry API; all parameter entity IDs remain stable. No `set_mode` action
-or WebSocket command is registered. Internal legacy setter arguments normalize to
-`full` and cannot restore restrictions. Old code requires a pre-schema-4 ledger backup
-for downgrade.
+The ledger uses schema 4. It stores qualified routes, definition-bound profile
+acceptance and the full-control policy (`control_mode: full`). There is no public
+mode-setting action or WebSocket command. Updates must preserve enrollment IDs,
+maintenance preferences and unresolved operations. Database downgrades require a
+compatible, consistent backup; unsupported schemas are rejected.
 Changing a qualified route or permission increments policy revision. Same-profile
 binding renewal is explicit and retains HA IDs; unresolved work blocks replacement.
 
