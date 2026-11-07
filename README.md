@@ -27,10 +27,20 @@ still apply. A profile name is not a blanket hardware-compatibility claim.
 
 Only the reference AT installation has local hardware-read evidence. New families
 are source-derived and simulator-tested. Read the [verification summary](docs/verification/README.md)
-for completed checks and remaining qualification. This is not a published HACS release.
+for completed checks and remaining qualification. Development source is available
+as a HACS custom repository; no stable GitHub release or default-catalog listing exists yet.
 The completed 24-hour hardware-observation baseline is 0.4.0, with intermittent
 read/connection problems. Source installation and the 0.6.0 full-control migration
 have been exercised on the test VM; a separate stability comparison is still pending.
+
+## Install through HACS
+
+Add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
+repositories**, category **Integration**, then download **Solar Inverter Cloud
+Bridge** and restart Home Assistant. Add the integration from **Settings → Devices
+& services**. Existing installations retain the `solar_inverter_bridge` domain.
+See [installation and collector setup](docs/INSTALL.md) before connecting a device.
+The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
 
 ## Documentation
 

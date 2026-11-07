@@ -56,11 +56,12 @@ The Home Assistant server must expose the collector's listener port. All three
 ports have bound on the test HAOS VM; partial failures are shown separately. Other container/network layouts still need
 their own verification.
 
-### HACS installation after publication
+### HACS custom-repository installation
 
 The repository is `https://github.com/jay0x/solar-inverter-cloud-bridge`.
 It has not been accepted into the default HACS catalog and has no published release.
-After its validation checks pass, the development branch can be tested as follows:
+GitHub tests, Hassfest and HACS validation pass for the reviewed candidate.
+Installation from the development branch was verified using HACS 2.0.5 on HA 2026.10.4:
 
 1. In HACS, open **Custom repositories**, add the repository URL and choose
    **Integration** as its category.

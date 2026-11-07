@@ -5,6 +5,39 @@ This records 0.8.1 branding/publication preparation, earlier profile/full-contro
 Current commands are in [the testing guide](../development/testing.md). A local test
 result is not a new hardware qualification or an installation-archive build.
 
+## Public repository and HACS installation — November 7, 2026
+
+Public source: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
+The initial import contains only the reviewed source tree, with a clean Git history;
+private files, installation-specific access tools and old local commits were excluded.
+Gitleaks found no secrets after a narrow exception for the public SRNE parameter
+identifier `bulk_charging_voltage_per_12v`; no credential/file-wide exceptions were used.
+
+Candidate **0.8.2 / panel 0.16.1 / schema 4**, component fingerprint:
+`877458045c64ccfe2c74b3e5794a1847976665f31f048585799b4849fab16a75`.
+
+- Hosted [tests](https://github.com/jay0x/solar-inverter-cloud-bridge/actions/runs/42393286327)
+  and [Hassfest/HACS validation](https://github.com/jay0x/solar-inverter-cloud-bridge/actions/runs/42393286408)
+  passed for commit `0677cfa`: 175 offline cases (174 passed/one skip), 27 HA tests,
+  documentation checks and both browser suites. No installation build was run.
+- The initial checks found undeclared optional `hassio`/`network` dependencies and
+  a configuration-schema assignment hidden from static validation. These were
+  corrected. Recovery-test timestamps now use a controlled clock instead of assuming
+  the hosted runner has been up longer than the grace periods; runtime reset logic
+  was not relaxed to pass tests.
+- HACS **2.0.5** on HA **2026.10.4** registered the public custom repository and
+  downloaded `main` at `0677cfa` over its normal authenticated WebSocket workflow.
+  All **53 installed component files** matched the public source hashes. Core check
+  and restart passed. This was an in-place transition from the manual source
+  installation to HACS management, not a fresh empty-HA installation.
+- API readback confirmed the exact component fingerprint, existing config entry,
+  the same reference inverter and all **85 entity IDs/registry overrides**, saved
+  maintenance preferences, fresh telemetry/settings and unresolved 0. Live Chromium
+  passed afterward, including native sensors/history and diagnostics.
+- No physical inverter Apply/reset command was sent. No GitHub Release, tag,
+  default-catalog submission or new 24-hour observation was created. Development
+  availability through a HACS custom repository is distinct from a stable release.
+
 ## Deployed 0.8.1 rename and publication preparation — November 7, 2026
 
 Product: **Solar Inverter Cloud Bridge**. Integration 0.8.1 / panel 0.16.1 /
