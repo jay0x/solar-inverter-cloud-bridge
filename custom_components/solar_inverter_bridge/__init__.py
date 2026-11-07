@@ -9,14 +9,15 @@ from .const import DOMAIN, NAME, PORTS
 _LOGGER = logging.getLogger(__name__)
 try:
     import voluptuous as vol
-    CONFIG_SCHEMA = vol.Schema({
-        vol.Optional(DOMAIN): vol.Schema({
-            vol.Optional("setup_local", default=False): bool,
-            vol.Optional("allowed_sources", default=list): [str],
-        })
-    }, extra=vol.ALLOW_EXTRA)
 except ImportError:
-    CONFIG_SCHEMA = None
+    vol = None
+
+CONFIG_SCHEMA = vol.Schema({
+    vol.Optional(DOMAIN): vol.Schema({
+        vol.Optional("setup_local", default=False): bool,
+        vol.Optional("allowed_sources", default=list): [str],
+    })
+}, extra=vol.ALLOW_EXTRA) if vol is not None else None
 
 
 async def async_setup(hass, config):

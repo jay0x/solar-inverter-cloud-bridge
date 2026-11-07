@@ -14,7 +14,7 @@ Formerly Solar Inverter Bridge. The integration domain remains
 
 ## Current scope
 
-The local development candidate is **0.8.1**, with panel **0.16.1** and ledger schema **4**.
+The development candidate is **0.8.2**, with panel **0.16.1** and ledger schema **4**.
 It has 24 selectable profile variants grouped by family, covering Modbus maps,
 PI30, PI30 MAX, PI18, G-ASCII and EyeBond 09C1. Protocol 4 and MUST enrollment
 aliases retain their IDs while sharing canonical family definitions.

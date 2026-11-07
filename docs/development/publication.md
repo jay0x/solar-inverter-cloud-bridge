@@ -5,7 +5,7 @@
 - Product: **Solar Inverter Cloud Bridge**.
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
 - Technical integration domain and component directory: `solar_inverter_bridge`.
-- Current candidate: **0.8.1**, panel **0.16.1**, ledger schema **4**.
+- Current candidate: **0.8.2**, panel **0.16.1**, ledger schema **4**.
 - Local operation and the tested minimum Home Assistant version, **2026.10.4**,
   are unchanged by the name. Cloud does not imply a hosted service.
 
@@ -78,7 +78,7 @@ current claims by globally replacing their versions.
 4. Test installing the public repository as a HACS custom repository in an authorized
    isolated HA installation. Source deployment is not proof of HACS installation.
 5. When release publication is requested, use a version matching the manifest
-   (for example `v0.8.1`) and publish a GitHub Release with accurate changes and
+   (for example `v0.8.2`) and publish a GitHub Release with accurate changes and
    limitations. A tag alone is not a release. A manual ZIP is optional and must be
    explicitly authorized/tested; no workflow automatically builds or publishes one.
 6. A public custom repository can be added to HACS before default-catalog inclusion.

@@ -1,6 +1,6 @@
 # Experimental device recognition and profile catalog
 
-Local candidate 0.8.1 / panel 0.16.1. This has **24 selectable profile variants**,
+Development candidate 0.8.2 / panel 0.16.1. This has **24 selectable profile variants**,
 including canonical Protocol 4 and MUST maps, plus separate PI30 and PI30 MAX dialects.
 These are not 24 unrelated or hardware-qualified protocols. Additional profiles are independently
 implemented from public protocol facts and tested with synthetic fixtures.

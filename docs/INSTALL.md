@@ -9,7 +9,7 @@ for the current support matrix and experimental binary limitations. The referenc
 in the manual-install ZIP and maintained with the GitHub source.
 
 The [profile guide](PROFILE_EXPANSION.md) describes recognition and the implemented
-settings. Candidate 0.8.1 includes the 0.8.0 protocol expansion and the new product
+settings. Candidate 0.8.2 includes the 0.8.0 protocol expansion and the new product
 name; the completed 24-hour observation baseline is 0.4.0. An installation archive
 has not been built for this candidate. Cloud branding does not require a cloud
 account or change the integration's local operation.

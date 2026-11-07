@@ -1,7 +1,7 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Local candidate: manifest 0.8.1 / panel 0.16.1, November 7, 2026. The completed
+Development candidate: manifest 0.8.2 / panel 0.16.1, November 7, 2026. The completed
 24-hour hardware-observation baseline is 0.4.0; a later-candidate comparison is still pending.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native
