@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
-from time import monotonic
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -15,6 +14,10 @@ from custom_components.solar_inverter_bridge.core.storage import Storage, Storag
 
 class RecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        # Backdated grace periods must not depend on the CI host's uptime.
+        clock = patch("custom_components.solar_inverter_bridge.core.session.monotonic", return_value=10000.0)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.path = Path(self.directory.name) / "bridge.sqlite3"
         self.storage = Storage(self.path)
@@ -46,7 +49,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.storage.set_collection(self.device, False, 10)
             self.assertEqual(await self.service.reset_collector(self.device, automatic=True), {"reset": "skipped"})
             self.storage.set_collection(self.device, True, 10)
-            self.service.observations[self.device] = Observation({}, monotonic())
+            self.service.observations[self.device] = Observation({}, self.clock())
             self.assertEqual(await self.service.reset_collector(self.device, automatic=True), {"reset": "skipped"})
             send.assert_not_awaited()
 
@@ -98,7 +101,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_startup_grace_and_three_poll_intervals(self):
         self.enable()
-        self.service._started_monotonic = monotonic()
+        self.service._started_monotonic = self.clock()
         self.assertFalse(self.service._reset_due(self.storage.device(self.device)))
         self.service._started_monotonic -= 400
         self.storage.set_collection(self.device, True, 300)
@@ -108,7 +111,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_enrollment_gets_its_own_grace_after_long_runtime(self):
         holder = self.service.connections["collector"]
-        holder.update(ready=True, verified_at=monotonic(), proof={"profile_id": "modbus_protocol_4"})
+        holder.update(ready=True, verified_at=self.clock(), proof={"profile_id": "modbus_protocol_4"})
         self.service.candidates["collector"] = holder
         await self.service.enroll("collector", "Unit")
         self.enable()
