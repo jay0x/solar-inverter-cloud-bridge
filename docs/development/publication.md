@@ -8,9 +8,9 @@
 - Current candidate: **0.8.2**, panel **0.16.1**, ledger schema **4**.
 - Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
-The public repository is available as a HACS custom repository. There is no stable
-GitHub release or default-catalog listing. Current checks and installation evidence
-are in [verification](../verification/README.md).
+The public repository is available as a HACS custom repository. Version 0.8.2 is
+a pre-release; default-catalog inclusion requires maintainer approval. Current
+checks and installation evidence are in [verification](../verification/README.md).
 
 ## Repository contents and installation
 

@@ -1,6 +1,6 @@
 # Install and operate Solar Inverter Cloud Bridge
 
-This is a development candidate, not a published HACS release. The integration runs
+Version 0.8.2 is a pre-release available through a HACS custom repository. The integration runs
 inside Home Assistant Core. It does not require a Supervisor app, MQTT, or a separate
 frontend plugin. The current target is Home Assistant Core 2026.10.4.
 
@@ -57,13 +57,14 @@ their own verification.
 ### HACS custom-repository installation
 
 The repository is `https://github.com/jay0x/solar-inverter-cloud-bridge`.
-It has not been accepted into the default HACS catalog and has no published release.
+It has not yet been accepted into the default HACS catalog.
 GitHub tests, Hassfest and HACS validation pass for the reviewed candidate.
 Installation from the development branch was verified using HACS 2.0.5 on HA 2026.10.4:
 
 1. In HACS, open **Custom repositories**, add the repository URL and choose
    **Integration** as its category.
-2. Download **Solar Inverter Cloud Bridge** and restart Home Assistant.
+2. Enable beta versions for the repository to select pre-release `v0.8.2`, download
+   **Solar Inverter Cloud Bridge**, and restart Home Assistant.
 3. Add the integration and configure the collector as described above.
 
 HACS installs the component directory from the repository; a custom release ZIP

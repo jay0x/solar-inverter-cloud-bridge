@@ -10,8 +10,8 @@ and the integration handles communication with the inverter on your local networ
 - Read-based protocol recognition and compatibility reports for unlisted devices.
 
 Runs inside Home Assistant Core without a separate app, MQTT broker or vendor-cloud
-account. Current development version: **0.8.2**. Available as a HACS custom repository;
-no stable release or default-catalog listing exists yet.
+account. Current version: **0.8.2 — pre-release**. Available as a HACS custom repository;
+default-catalog inclusion requires approval by the HACS maintainers.
 
 ## Inverter models
 
@@ -69,12 +69,20 @@ by profile and firmware; some profiles provide monitoring only. See the
 [measurement and control matrix](docs/PROFILE_EXPANSION.md) and
 [verification results](docs/verification/README.md).
 
+### Known limitations
+
+Intermittent polling timeouts have been observed on the reference AT installation.
+Readings can recover, but the cause and long-term reliability are still under
+investigation. Additional profiles are experimental and require device-specific
+verification. This pre-release does not claim fault-free continuous operation.
+
 ## Install through HACS
 
 Add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
 repositories**, category **Integration**, then download **Solar Inverter Cloud
 Bridge** and restart Home Assistant. Add the integration from **Settings → Devices
 & services**. The integration domain is `solar_inverter_bridge`.
+To select the `v0.8.2` pre-release, enable beta versions for the repository in HACS.
 See [installation and collector setup](docs/INSTALL.md) before connecting a device.
 The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
 

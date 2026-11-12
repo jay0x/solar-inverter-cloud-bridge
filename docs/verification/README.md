@@ -9,7 +9,7 @@ Commands are in the [testing guide](../development/testing.md).
 - Integration: **0.8.2**; panel: **0.16.1**; ledger schema: **4**.
 - Tested environment: Home Assistant Core **2026.10.4**, Python **3.14**, HACS **2.0.5**.
 - Component fingerprint:
-  `877458045c64ccfe2c74b3e5794a1847976665f31f048585799b4849fab16a75`.
+  `effb89ce8d53db88ee3ec1cf77245bc0678b166a5677b5ac5d419f1c220ac930`.
 
 | Check | Result / scope |
 | --- | --- |
@@ -49,10 +49,14 @@ installation. No inverter Apply or reset command was sent during these checks.
 - Additional profiles and binary collector paths are source-derived and simulator-tested.
   They do not have project hardware-write qualification for every model or firmware.
 - The current candidate has no completed fixed-version 24-hour stability qualification.
+- Intermittent polling timeouts occur on the reference AT installation. Their cause
+  and long-term impact remain under investigation; fresh readings after recovery
+  do not establish fault-free continuous operation.
 - Readback confirms a reported setting, not an independently observed electrical effect.
 - Backup freeze/copy/recovery tests do not establish a completed Supervisor archive restore.
 - Router recipes have syntax and browser coverage, not comprehensive physical-router testing.
 
 See the [compatibility register](../DEVICE_COMPATIBILITY.md) and
 [profile matrix](../PROFILE_EXPANSION.md) for exact scope. Development source is
-available as a HACS custom repository; there is no stable release or default-catalog listing.
+available as a HACS custom repository. Version 0.8.2 is a pre-release, and
+default-catalog inclusion requires approval by the HACS maintainers.
