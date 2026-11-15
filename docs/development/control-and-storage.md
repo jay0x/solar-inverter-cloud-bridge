@@ -92,6 +92,8 @@ binding renewal is explicit and retains HA IDs; unresolved work blocks replaceme
 ## Backup and maintenance
 
 The HA backup hook checkpoints WAL and freezes the bridge writer during copying.
+The polling scheduler waits through the database freeze and resumes from fresh
+enrollment data afterward; a temporary backup refusal must not terminate it.
 New writes are refused during the freeze. Restore only a consistent ledger/sidecar
 checkpoint; old code refuses a newer schema. The software freeze/copy/recovery
 tests do not establish a completed Supervisor archive restore on hardware.

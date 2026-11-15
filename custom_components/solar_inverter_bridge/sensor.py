@@ -21,12 +21,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
     added = set()
 
     async def sync_devices():
-        runtime = entry.runtime_data
+        runtime = getattr(entry, "runtime_data", None)
         if runtime is None:
             return
         devices = await hass.async_add_executor_job(runtime["storage"].list_devices)
         removed_ids = await hass.async_add_executor_job(runtime["storage"].removed_device_ids)
-        if entry.runtime_data is not runtime:
+        if getattr(entry, "runtime_data", None) is not runtime:
             return
         active_ids = {device["device_id"] for device in devices}
         cleanup_removed_devices(hass, entry, removed_ids)

@@ -19,11 +19,11 @@ async def setup_controls(hass, entry, async_add_entities, factory):
     entities = {}
 
     async def sync():
-        runtime = entry.runtime_data
+        runtime = getattr(entry, "runtime_data", None)
         if runtime is None:
             return
         devices = await hass.async_add_executor_job(runtime["storage"].list_devices)
-        if entry.runtime_data is not runtime:
+        if getattr(entry, "runtime_data", None) is not runtime:
             return
         active = {device["device_id"] for device in devices}
         for key in list(entities):

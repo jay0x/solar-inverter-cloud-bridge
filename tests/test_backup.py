@@ -1,5 +1,6 @@
 """A Home Assistant backup must copy a quiescent bridge database."""
 
+import asyncio
 import contextlib
 import shutil
 import sqlite3
@@ -9,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from custom_components.solar_inverter_bridge.core.storage import Storage, StorageError
+from custom_components.solar_inverter_bridge.core.session import CollectorService
 
 
 class BackupFreezeTests(unittest.TestCase):
@@ -73,3 +75,42 @@ class BackupFreezeTests(unittest.TestCase):
             threading.Thread(target=stop).start()
             self.assertTrue(finished.wait(5))
             self.assertFalse(storage.thread.is_alive())
+
+
+class BackupPollingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scheduler_survives_backup_and_resumes_without_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Storage(Path(directory) / "bridge.sqlite3")
+            device = await asyncio.to_thread(storage.enroll, "backup-test", "Unit", "modbus_protocol_4")
+            service = CollectorService([], storage)
+            service.connections["backup-test"] = {"closed": asyncio.Event()}
+            polled = asyncio.Event()
+            calls = []
+
+            async def record_poll(identifier):
+                calls.append(identifier)
+                polled.set()
+
+            service._poll_device = record_poll
+            scheduler = asyncio.create_task(service._poll_loop())
+            service.tasks.add(scheduler)
+            try:
+                await asyncio.wait_for(polled.wait(), 3)
+                for _ in range(2):
+                    await asyncio.to_thread(storage.begin_backup)
+                    polled.clear()
+                    count = len(calls)
+                    await asyncio.sleep(1.2)
+                    self.assertFalse(scheduler.done(), "Backup permanently stopped the scheduler")
+                    self.assertEqual(len(calls), count, "Polling was scheduled while storage was frozen")
+                    await asyncio.to_thread(storage.end_backup)
+                    await asyncio.wait_for(polled.wait(), 3)
+                    self.assertGreater(len(calls), count)
+                    self.assertFalse(scheduler.done())
+                self.assertEqual(set(calls), {device})
+                self.assertEqual(service.transmitted, 0)
+                self.assertEqual(await asyncio.to_thread(storage.recent_operations, device), [])
+            finally:
+                await service.close()
+                await asyncio.to_thread(storage.end_backup)
+                await asyncio.to_thread(storage.close)

@@ -217,21 +217,25 @@ class StorageTests(unittest.TestCase):
                 service = CollectorService(["127.0.0.1"], storage)
                 port = (await service.start())[0][1]
                 tasks = [asyncio.create_task(client(port, name)) for name in ("ONE", "TWO")]
-                await asyncio.sleep(0.7)
-                self.assertEqual(len(service.candidates), 2)
-                for sha in list(service.candidates):
-                    holder = service.candidates[sha]
-                    holder["ready"] = True
-                    holder["verified_at"] = monotonic()
-                    holder["proof"] = {"profile_id": "protocol-4"}
-                    await service.enroll(sha, holder["identity_ref"])
-                status = await service.status()
-                self.assertEqual(len(status["devices"]), 2)
-                self.assertEqual(status["pending"], [])
-                for task in tasks:
-                    task.cancel()
-                await service.close()
-                storage.close()
+                try:
+                    async with asyncio.timeout(3):
+                        while len(service.candidates) != 2:
+                            await asyncio.sleep(0.01)
+                    for sha in list(service.candidates):
+                        holder = service.candidates[sha]
+                        holder["ready"] = True
+                        holder["verified_at"] = monotonic()
+                        holder["proof"] = {"profile_id": "protocol-4"}
+                        await service.enroll(sha, holder["identity_ref"])
+                    status = await service.status()
+                    self.assertEqual(len(status["devices"]), 2)
+                    self.assertEqual(status["pending"], [])
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await service.close()
+                    storage.close()
         asyncio.run(run())
 
     def test_poll_publishes_and_a_blocked_write_sends_nothing(self):

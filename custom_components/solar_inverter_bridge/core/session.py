@@ -709,11 +709,20 @@ class CollectorService:
                     task.cancel()
 
     async def _poll_loop(self):
+        from .storage import StorageError
+
         while True:
             await asyncio.sleep(1)
             if self.storage is None:
                 continue
-            devices = await asyncio.to_thread(self.storage.list_devices)
+            try:
+                devices = await asyncio.to_thread(self.storage.list_devices)
+            except StorageError as error:
+                if str(error) != "storage_backup_in_progress":
+                    raise
+                # A backup freezes reads as well as writes. Keep the scheduler
+                # alive and resume from fresh enrollment data after the freeze.
+                continue
             for device in devices:
                 self.collection_enabled[device["device_id"]] = device["enabled"]
                 if not device["enabled"]:

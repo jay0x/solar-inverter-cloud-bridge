@@ -4,6 +4,7 @@ import asyncio
 from hashlib import sha256
 from pathlib import Path
 import tempfile
+from time import monotonic
 import unittest
 
 from custom_components.solar_inverter_bridge.core.identity import parse_at_response
@@ -46,13 +47,18 @@ class CollectorAtTests(unittest.IsolatedAsyncioTestCase):
             storage = Storage(Path(directory) / "bridge.sqlite3")
             service = CollectorService(["127.0.0.1"], storage, heartbeat_interval=30)
             device_id = storage.enroll(digest, "Unit", "modbus_protocol_4")
+            # This peer implements AT exchanges only; background RTU polling is
+            # covered by separate tests and must not race the scripted replies.
+            service._polled[device_id] = monotonic() + 3600
             host, port = (await service.start())[0]
             reader, writer = await asyncio.open_connection(host, port)
             try:
                 await reader.readuntil(b"\n")
                 writer.write(b"AT+DTUPN:" + identity + b"\r\n")
                 await writer.drain()
-                await asyncio.sleep(0.05)
+                async with asyncio.timeout(3):
+                    while digest not in service.connections:
+                        await asyncio.sleep(0.01)
 
                 async def answer_info():
                     seen = []
