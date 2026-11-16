@@ -27,7 +27,7 @@ def _diagnostic_time(value):
 
 
 def _same_diagnostic(saved, record):
-    keys = ("device_id", "stage", "code", "parameter", "register_address", "function", "exception_code")
+    keys = ("device_id", "stage", "code", "parameter", "register_address", "function", "exception_code", "payload_hex")
     return all(saved.get(key) == record.get(key) for key in keys)
 
 

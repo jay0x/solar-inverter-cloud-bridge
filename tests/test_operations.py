@@ -444,11 +444,20 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.service.observations[self.device_id] = Observation({"pv_power": {"value": 1}}, monotonic())
         self.service._expire_observations()
         self.assertEqual(len(updates), 1)
-        self.service.observations[self.device_id].observed_monotonic -= 61
+        self.service._poll_intervals[self.device_id] = 10
+        self.service.observations[self.device_id].observed_monotonic -= 71
         self.service._expire_observations()
         self.assertEqual(len(updates), 2)
         self.service._expire_observations()
         self.assertEqual(len(updates), 2)
+        long_pause = Observation({"pv_power": {"value": 1}}, monotonic() - 359)
+        self.service.observations["slow"] = long_pause
+        self.service._poll_intervals["slow"] = 300
+        self.service._expire_observations()
+        self.assertTrue(self.service._availability["slow"])
+        long_pause.observed_monotonic -= 2
+        self.service._expire_observations()
+        self.assertFalse(self.service._availability["slow"])
 
     async def test_collection_options_validate_and_persist(self):
         self.storage.set_collection(self.device_id, False, 20)

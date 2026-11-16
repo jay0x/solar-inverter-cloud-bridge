@@ -251,7 +251,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(diagnostic.schema,2);
     assert.equal(diagnostic.parameter_inventory.length,51);
     assert.equal(diagnostic.recent_issues[0].register_address,630);
-    assert.equal(diagnostic.frontend.version,'0.20.0');
+    assert.equal(diagnostic.frontend.version,'0.22.0');
     console.log('PASS timestamped issue in HA time zone and backend diagnostics download');
 
     await page.evaluate(() => window.testPanel._navigate("sib/device/test-device/settings"));
@@ -697,7 +697,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await page.locator('#connection-method').selectOption('redirect');
     await page.getByRole('button',{name:'Save connection',exact:true}).click();
     await page.waitForFunction(()=>state.devices[0].connection_options?.method==='redirect');
-    assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1).collector_ip),'');
+    assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1).collector_ip),'192.168.10.58');
     await page.locator('#poll-enabled').check();
     await page.getByRole('button',{name:'Save collection settings',exact:true}).click();
     await page.waitForFunction(()=>state.devices[0].enabled);

@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 TELEMETRY_TTL_SECONDS = 60
 
 
+def telemetry_ttl(poll_interval):
+    """Keep the last reading through one missed cycle, not only for 60 seconds."""
+    pause = poll_interval if type(poll_interval) is int and 1 <= poll_interval <= 300 else 10
+    return TELEMETRY_TTL_SECONDS + pause
+
+
 class Observation:
     def __init__(self, values, observed_monotonic, observed_utc=None):
         self.values = values

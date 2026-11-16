@@ -81,7 +81,7 @@ class BridgeSensor(SensorEntity):
             return
         service = self._entry.runtime_data["service"]
         observation = service.observations.get(self._device_id)
-        if not service.collection_enabled.get(self._device_id, True) or observation is None or not observation.available(monotonic()):
+        if not service.collection_enabled.get(self._device_id, True) or observation is None or not observation.available(monotonic(), service.telemetry_ttl_for(self._device_id)):
             self._attr_available = False
             self._attr_native_value = None
         else:

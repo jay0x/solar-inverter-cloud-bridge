@@ -30,14 +30,19 @@ def local_ip(value):
 def options(method="auto", collector_ip="", callback_host="", callback_port=8899, udp_port=58899):
     if method not in ("auto", "callback", "redirect"):
         raise ValueError("invalid_connection_method")
-    if method == "redirect" or (method == "auto" and not collector_ip):
+    ip = local_ip(collector_ip) if collector_ip else ""
+    if not ip and method != "callback":
         return {"method": method, "collector_ip": ""}
     if type(callback_port) is not int or not 1024 <= callback_port <= 65535 or callback_port in (18899, 38899):
         raise ValueError("invalid_callback_port")
     if type(udp_port) is not int or not 1 <= udp_port <= 65535:
         raise ValueError("invalid_callback_udp_port")
-    return {"method": method, "collector_ip": local_ip(collector_ip), "callback_host": local_ip(callback_host),
-            "callback_port": callback_port, "udp_port": udp_port}
+    saved = {"method": method, "collector_ip": ip, "callback_port": callback_port, "udp_port": udp_port}
+    if callback_host:
+        saved["callback_host"] = local_ip(callback_host)
+    elif method != "redirect":
+        raise ValueError("invalid_callback_address")
+    return saved
 
 
 def payload(config):
@@ -239,7 +244,7 @@ class CallbackConnections:
                 raise ValueError("callback_source_not_allowed")
             record = {"request_id": request_id, "config": config, "expected_identity": expected_identity, "request_identity": expected_identity,
                       "device_id": device_id, "state": "waiting", "sent": False, "expires": monotonic() + 120}
-            if not ip:
+            if config["method"] == "redirect" or not ip:
                 holder = self.service.connections.get(expected_identity)
                 record["state"] = "connected" if self.service._connected(holder) else "waiting_for_connection"
                 if record["state"] == "connected":

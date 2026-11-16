@@ -399,7 +399,8 @@ async def test_actual_ha_state_expires_without_next_poll(hass, entry):
     energy = hass.states.get("sensor.unit_pv_energy_total")
     assert energy.attributes["device_class"] == "energy"
     assert energy.attributes["state_class"] == "total_increasing"
-    runtime["service"].observations[device].observed_monotonic -= 61
+    runtime["service"]._poll_intervals[device] = 10
+    runtime["service"].observations[device].observed_monotonic -= 71
     runtime["service"]._expire_observations()
     await hass.async_block_till_done()
     assert hass.states.get("sensor.unit_pv_power").state == "unavailable"

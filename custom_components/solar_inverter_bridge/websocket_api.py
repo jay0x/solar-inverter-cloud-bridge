@@ -395,6 +395,7 @@ async def ws_set_collection(hass, connection, msg):
         connection.send_error(msg["id"], "invalid_format", str(error))
         return
     entry.runtime_data["service"].collection_enabled[msg["device_id"]] = msg["enabled"]
+    entry.runtime_data["service"]._poll_intervals[msg["device_id"]] = msg["poll_interval"]
     entry.runtime_data["service"]._notify()
     connection.send_result(msg["id"], {"enabled": msg["enabled"], "poll_interval": msg["poll_interval"]})
 

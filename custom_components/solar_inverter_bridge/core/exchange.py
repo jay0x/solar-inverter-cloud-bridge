@@ -74,7 +74,9 @@ async def read_words(reader, writer, address, count, slave=1, timeout=5, functio
                                 exception_code=getattr(error, "exception_code", None))
                     raise
                 if parsed is None or parsed[1] != len(data):
-                    raise ValueError("incomplete_or_extra_inner_frame")
+                    error = ValueError("incomplete_or_extra_inner_frame")
+                    error.payload_hex = data[:24].hex()
+                    raise error
                 reader.emit("register_read", address=address, count=count, slave=slave, function=function,
                             words=list(parsed[0]), origin=reader.wire.origin)
                 return parsed[0], b"", request

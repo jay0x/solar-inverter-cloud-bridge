@@ -230,8 +230,9 @@ candidates, with slaves 1 and 5. There are at most six candidates within the sam
 15 s budget. Native replies must match TID, function and route exactly and pass
 CRC, slave and profile checks. One route and inverter per collector are supported.
 TIDs are not reused: the session closes before 16-bit wrap and waits for the
-collector to reconnect. Callback heartbeat scheduling is capped at 20 s, while
-the binary heartbeat payload retains its interval value of 60 s. Heartbeat time
+collector to reconnect. An empty binary FC4 reply is a complete 8-byte header with no inner bytes. It is
+retried and does not close the callback session. Callback heartbeat scheduling is
+capped at 20 s, while the binary heartbeat payload retains its interval value of 60 s. Heartbeat time
 fields are collector liveness, not inverter clock-register writes.
 
 ## 6. Inverter payload protocols

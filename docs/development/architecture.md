@@ -81,7 +81,7 @@ trigger guessed resynchronization. Full wire details and route budgets are in th
 
 Only valid completed reads become observations. Reconnect, heartbeat, a UI refresh
 or a single-setting readback does not refresh a whole measurement group. Unknown
-or unavailable fields do not become zero. Telemetry expires after 60 seconds;
+or unavailable fields do not become zero. Telemetry expires after 60 seconds plus the configured pause;
 complete settings use `max(90 seconds, 5 * poll_interval)`.
 
 Each saved profile defines its entity set and units. HA entity properties read

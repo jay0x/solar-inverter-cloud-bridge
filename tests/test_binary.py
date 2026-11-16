@@ -202,7 +202,7 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
         self.storage.close()
         self.directory.cleanup()
 
-    def collector(self, pn=b"SYNTHETIC-BINARY-PN", *, unsolicited=True, slave=1, route=(1, 1), model=32771, fault=None):
+    def collector(self, pn=b"SYNTHETIC-BINARY-PN", *, unsolicited=True, slave=1, route=(1, 1), model=32771, fault=None, empty_reads=0):
         async def run():
             reader, writer = await asyncio.open_connection("127.0.0.1", self.port)
             regs = {address: 0 for address in required_addresses()}
@@ -233,6 +233,9 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
                             continue
                         if fault == "ascii":
                             reply = b"(230.0 50.0)\r"
+                        elif self.empty_reads:
+                            self.empty_reads -= 1
+                            reply = b""
                         else:
                             register, count = struct.unpack(">HH", payload[2:6])
                             if payload[1]==16:
@@ -263,6 +266,7 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 writer.close()
                 await writer.wait_closed()
+        self.empty_reads = empty_reads
         task = asyncio.create_task(run())
         self.clients.append(task)
         return task
@@ -302,6 +306,24 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
         finally:
             writer.close()
             await writer.wait_closed()
+
+    async def test_empty_binary_reply_retries_without_dropping_the_session(self):
+        from custom_components.solar_inverter_bridge.core.framing import read_request
+        self.collector()
+        await wait_until(lambda: len(self.service.candidates) == 1)
+        key = next(iter(self.service.candidates))
+        await self.service.verify(key)
+        holder = self.service.connections[key]
+        self.empty_reads = 1
+        data = await holder["reader"].exchange_inverter(read_request(184, 1, holder["reader"].slave), timeout=5)
+        self.assertTrue(data)
+        self.assertFalse(holder["writer"].is_closing())
+        self.assertIs(self.service.connections[key], holder)
+        self.empty_reads = 9
+        with self.assertRaisesRegex(ValueError, "binary_empty_inverter_reply"):
+            await holder["reader"].exchange_inverter(read_request(227, 5, holder["reader"].slave), timeout=5)
+        self.assertFalse(holder["writer"].is_closing())
+        self.assertTrue(self.service._binary_frame_aligned(holder, ValueError("binary_empty_inverter_reply")))
 
     async def test_silent_binary_override_and_slave_five_are_independent_of_port(self):
         self.service.bootstrap_preference = "binary"

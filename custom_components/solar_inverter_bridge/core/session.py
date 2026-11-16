@@ -42,6 +42,7 @@ class CollectorService:
         self.rejected = 0
         self.tasks = set()
         self._polled = {}
+        self._poll_intervals = {}
         self._failures = {}
         self._healthy = {}
         self._next_poll = {}
@@ -118,6 +119,9 @@ class CollectorService:
             value = getattr(error, key, None)
             if isinstance(value, int):
                 record[key] = value
+        payload_hex = getattr(error, "payload_hex", None)
+        if isinstance(payload_hex, str) and re.fullmatch(r"[0-9a-f]{2,64}", payload_hex):
+            record["payload_hex"] = payload_hex
         persisted = record
         if self.storage is not None:
             try:
@@ -140,6 +144,15 @@ class CollectorService:
                 and not holder["closed"].is_set() and not holder["writer"].is_closing()
                 and not holder["reader"].at_eof()
                 and self.connections.get(holder["identity_sha256"]) is holder)
+
+    @staticmethod
+    def _binary_frame_aligned(holder, error):
+        """A complete binary envelope was consumed; the TCP stream is still aligned."""
+        return (holder is not None and holder.get("dialect") == "binary"
+                and isinstance(error, ValueError) and not holder["writer"].is_closing()
+                and str(error) in ("binary_empty_inverter_reply", "incomplete_or_extra_inner_frame",
+                                   "unexpected_slave_or_transport", "unexpected_function_or_transport",
+                                   "unexpected_byte_count", "crc_mismatch", "extra_inner_exception_bytes"))
 
     def _disconnect(self, holder):
         holder["closed"].set()
@@ -713,8 +726,13 @@ class CollectorService:
         if self.on_update is not None:
             self.on_update()
 
+    def telemetry_ttl_for(self, device_id):
+        from .observations import telemetry_ttl
+        return telemetry_ttl(self._poll_intervals.get(device_id))
+
     def _expire_observations(self):
-        availability = {key: observation.available(monotonic()) for key, observation in self.observations.items()}
+        now = monotonic()
+        availability = {key: observation.available(now, self.telemetry_ttl_for(key)) for key, observation in self.observations.items()}
         if availability != self._availability:
             self._availability = availability
             self._notify()
@@ -745,6 +763,7 @@ class CollectorService:
                 continue
             for device in devices:
                 self.collection_enabled[device["device_id"]] = device["enabled"]
+                self._poll_intervals[device["device_id"]] = device["poll_interval"]
                 if not device["enabled"]:
                     continue
                 if device["device_id"] in self.callback.switching:
@@ -843,7 +862,8 @@ class CollectorService:
                             self._planned_reconnect[device_id] = True
                         else:
                             await self.record_issue(error, device_id, "settings_read")
-                        self._disconnect(holder)
+                        if not self._binary_frame_aligned(holder, error):
+                            self._disconnect(holder)
                 await self._bind_holder_route(device_id, holder)
         except BaseException as error:
             if str(error) in ("accepted_profile_fingerprint_changed","profile_native_protocol_mismatch","profile_identity_anchor_mismatch","accepted_profile_transport_changed"):
@@ -851,7 +871,7 @@ class CollectorService:
                 self._settings_observed.pop(device_id,None)
                 self.observations.pop(device_id,None)
                 self._notify()
-            else:
+            elif not self._binary_frame_aligned(holder, error):
                 self._disconnect(holder)
             raise
         self.observations[device_id] = Observation(snapshot["values"], observed_at, observed_utc)
@@ -1362,7 +1382,9 @@ class CollectorService:
             device["selected_route"] = await asyncio.to_thread(self.storage.selected_route, device["device_id"])
             device["collector_channels"] = len(self._channels.get(device["collector_sha256"], []))
             observed = self.observations.get(device["device_id"])
-            device["stale"] = observed is None or not observed.available(monotonic())
+            self._poll_intervals[device["device_id"]] = device["poll_interval"]
+            device["telemetry_ttl_seconds"] = self.telemetry_ttl_for(device["device_id"])
+            device["stale"] = observed is None or not observed.available(monotonic(), device["telemetry_ttl_seconds"])
             device["profile_layers"] = describe_profile(device["profile_id"], identity=self.native_identity.get(device["device_id"]),
                 binding=(accepted or {}).get("binding"), basis=(accepted or {}).get("basis"),
                 evidence="recheck_required" if device["profile_change_required"] else "saved" if device["stale"] or not device["connected"] or not device["enabled"] else "observed")

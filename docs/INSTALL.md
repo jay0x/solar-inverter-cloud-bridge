@@ -95,6 +95,8 @@ identity. Redirected mode selects a non-callback channel and still requires DNS/
 routing to this HA. Automatic retains a usable owner and requests callback only when
 disconnected and an IP is provided. A saved preference or sent UDP request is not
 proof of a working connection; check the active port and fresh readings.
+The collector IP is retained when switching to a redirected connection and is not
+used for callback until Local connection or Automatic with that IP is selected again.
 Readings, supported setting writes, and clock sync work on AT and Binary EyeBond.
 Restart Wi-Fi module is an AT command. It is unavailable on Binary EyeBond, including
 the confirmed local callback. A redirected connection normally negotiates AT and keeps

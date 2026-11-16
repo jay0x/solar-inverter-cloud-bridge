@@ -85,12 +85,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._routerHints?.[key]) hints.set(key, this._routerHints[key]);
     }
     hints.set("addresses", JSON.stringify(this._routerHints?.addresses || []));
-    return "/solar_inverter_bridge/routers.html?v=0.20.0#" + hints.toString();
+    return "/solar_inverter_bridge/routers.html?v=0.22.0#" + hints.toString();
   }
 
   async _loadCollectorDomains() {
     try {
-      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.20.0");
+      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.22.0");
       if (!response.ok) throw new Error("Domain catalogue unavailable");
       this._collectorDomains = await response.json();
     } catch (_) {
@@ -136,7 +136,8 @@ class SolarInverterBridgePanel extends HTMLElement {
     const sources = items => JSON.stringify([...new Set(items)].sort());
     const connection = config => {
       const method = config.method || 'redirect';
-      const ip = method === 'redirect' ? '' : (config.collector_ip || '').trim();
+      const ip = (config.collector_ip || '').trim();
+      if (method === 'redirect') return JSON.stringify([method, ip]);
       return JSON.stringify(ip ? [method, ip, (config.callback_host || '').trim(), Number(config.callback_port ?? 8899), Number(config.udp_port ?? 58899)] : [method, '']);
     };
     const comparisons = {
@@ -347,7 +348,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     const body = !this._status ? '<section class="empty-state"><h2>Connecting to your bridge…</h2><p>Reading the saved devices and their latest measurements.</p></section>' : this._wizard ? this._wizardView(status) : selected ? this._deviceView(selected, status) : this._home(status);
     const firstSetup = !selected && !devices.length;
     const support = this._wizard ? "" : firstSetup ? this._disclosure("home-help", "Connection help and diagnostics", this._compatibilityView(status, false), this._reportOpen) : this._compatibilityView(status);
-    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.20.0"><div class="sib"></div>`;
+    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.22.0"><div class="sib"></div>`;
     this.querySelector(".sib").innerHTML = `<header class="appbar"><button class="icon-button" aria-label="Open Home Assistant menu" data-action="menu">${this._icon("menu")}</button>
       <img class="brand-logo" src="/solar_inverter_bridge/icon.png" srcset="/solar_inverter_bridge/icon@2x.png 2x" width="32" height="32" alt=""><span class="brand">Solar Inverter Cloud Bridge</span><span class="local-label">Local connection</span></header>
       <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || this._error ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
@@ -694,7 +695,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       <label class="switch-label"><input id="poll-enabled" type="checkbox" data-draft="${device.device_id}:enabled" ${this._draft(device.device_id, "enabled", device.enabled !== false) ? "checked" : ""}> Collect readings</label>
        <p class="field-help">When unchecked, regular polling and new setting writes are paused. An exchange already in progress may finish. The inverter keeps operating; entities and history are retained. Existing TCP connections may keep heartbeats, but automatic callback requests stop.</p>
        <label class="field-label" for="poll-interval">Pause between polls, seconds</label><input id="poll-interval" type="number" min="1" max="300" step="1" data-draft="${device.device_id}:poll_interval" value="${this._escape(this._draft(device.device_id, "poll_interval", device.poll_interval || 10))}">
-       <p class="field-help">1–300 seconds after each completed telemetry cycle, not a fixed update interval. A 10-second cycle with a 1-second pause starts the next cycle about 11 seconds later. Polls never overlap. Complete settings are refreshed at least ${this._escape(device.settings_refresh_interval || Math.max(30,device.poll_interval || 10))} seconds apart and after reconnects or writes. Every command still reads its baseline independently. Readings become stale after 60 seconds without an update.</p><button data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
+        <p class="field-help">1–300 seconds after each completed telemetry cycle, not a fixed update interval. A 10-second cycle with a 1-second pause starts the next cycle about 11 seconds later. Polls never overlap. Complete settings are refreshed at least ${this._escape(device.settings_refresh_interval || Math.max(30,device.poll_interval || 10))} seconds apart and after reconnects or writes. Every command still reads its baseline independently. Readings become stale after ${this._escape(device.telemetry_ttl_seconds || (60 + Number(device.poll_interval || 10)))} seconds without an update: 60 seconds plus the pause, so a 300-second pause remains current for 360 seconds.</p><button data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
       <div class="subsection"><h3>Wi-Fi module</h3><p>Restarts only the collector module. Inverter settings stay unchanged, and readings pause until it reconnects.</p>
       <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button>${device.capabilities?.module_reset === false ? '<p class="field-help">Unavailable on Binary EyeBond. This command is available only on an AT session, normally a redirected connection.</p>' : '<p class="field-help">Available on this AT session. A Binary EyeBond callback does not support restarting the Wi-Fi module.</p>'}</div>
       <div class="subsection"><h3>Allowed network sources</h3><p>Only new collector connections from these addresses are admitted. Use the router IP when the router translates source addresses.</p>
@@ -942,8 +943,7 @@ class SolarInverterBridgePanel extends HTMLElement {
         callback_port:Number(this.querySelector('#callback-port').value),
         udp_port:Number(this.querySelector('#callback-udp-port').value)};
       if (config.method === 'callback' && !config.collector_ip) { this._error='Enter the Wi-Fi collector IP address.';return this._render(); }
-      if (config.method === 'redirect') config.collector_ip='';
-      if (config.collector_ip && !config.callback_host) { this._error='Enter a Home Assistant LAN IP in Callback network settings.';return this._render(); }
+      if (config.method !== 'redirect' && config.collector_ip && !config.callback_host) { this._error='Enter a Home Assistant LAN IP in Callback network settings.';return this._render(); }
       const signature=JSON.stringify(config);
       const previous=(this._status.connection_requests || []).find(r=>r.request_id===this._drafts[scope+':connection_request']);
       if (this._drafts[scope+':connection_signature']!==signature || !this._drafts[scope+':connection_request'] || (previous && ['failed','timed_out','disconnected','superseded'].includes(previous.state))) {
@@ -1024,7 +1024,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "journal") return this._downloadJournal();
     if (action === "download") {
       return this._call({type: "solar_inverter_bridge/diagnostics"}, diagnostic => {
-        diagnostic.frontend = {version: "0.20.0", view: this._tab};
+        diagnostic.frontend = {version: "0.22.0", view: this._tab};
         const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostic, null, 2)], {type: "application/json"}));
         const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-diagnostics.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);

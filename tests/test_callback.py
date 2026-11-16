@@ -329,3 +329,12 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.callback.view(self.service.callback.requests[request])["reason"], "callback_identity_mismatch")
         self.assertIn(device["device_id"], self.service.callback.blocked)
         self.assertFalse(self.service.connections)
+
+    async def test_redirect_keeps_collector_ip_without_sending_udp(self):
+        device = self.enrolled()
+        saved = options("redirect", "127.0.0.1", "127.0.0.1")
+        self.assertEqual(saved["collector_ip"], "127.0.0.1")
+        result = await self.service.callback.change(str(uuid.uuid4()), device["device_id"], saved, lambda config: None)
+        self.assertEqual(result["connection_method"], "redirect")
+        self.assertFalse(result["sent"])
+        self.assertTrue(self.messages.empty())

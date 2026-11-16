@@ -343,7 +343,23 @@ class BinaryTransport:
         # Initial binary milestone intentionally has no write implementation.
         if len(request) < 2 or request[1] not in (3,4):
             raise ValueError("transport_write_unsupported")
-        return await self.request(4, request, timeout=timeout)
+        # The reference callback answers a busy inverter with a complete 8-byte
+        # header and no inner bytes. That frame is aligned, so retry it here
+        # instead of treating the socket as corrupt.
+        deadline = monotonic() + timeout
+        for attempt in range(3):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            payload = await self.request(4, request, timeout=remaining)
+            if payload:
+                return payload
+            self.emit("empty_inverter_reply", attempt=attempt + 1)
+            if attempt < 2 and deadline - monotonic() > 0.3:
+                await asyncio.sleep(0.2)
+        error = ValueError("binary_empty_inverter_reply")
+        error.received_bytes = 8
+        raise error
 
     async def qualify(self):
         """Reviewed bounded routes, not a route/slave sweep or a map guess."""
