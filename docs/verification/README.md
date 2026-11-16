@@ -5,14 +5,14 @@ qualifications. Commands are in the [testing guide](../development/testing.md).
 
 ## Current source candidate
 
-- Integration: **0.9.0**; panel: **0.20.0**; ledger schema: **4**.
+- Integration: **0.9.0**; panel: **0.22.0**; ledger schema: **4**.
 - Test environment: Python **3.14.4**, Home Assistant fixtures **2026.10.4**.
 - Component fingerprint:
-  `4399694193e7f617d003c2255161351804e605bd65f6c4b3d6af6fe9a2c21e84`.
+  `22e886360f529b22073739530c8658f139af81019e53725332e3836dd89a463d`.
 
 | Check | Result / scope |
 | --- | --- |
-| Offline suite | 194 cases: 193 passed, one local TCP502 skip |
+| Offline suite | 197 cases: 196 passed, one local TCP502 skip |
 | Home Assistant integration suite | 30 passed |
 | Browser suites | Panel and router-guide journeys passed, including callback fields and request persistence |
 | Documentation | Local links, language placement, license integrity and whitespace checks passed |

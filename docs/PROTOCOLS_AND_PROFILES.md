@@ -1,7 +1,7 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Current source candidate: integration 0.9.0 / panel 0.20.0. Checks and hardware qualification
+Current source candidate: integration 0.9.0 / panel 0.22.0. Checks and hardware qualification
 are described in `docs/verification/README.md` in the source repository.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native

@@ -5,10 +5,10 @@
 - Product: **Solar Inverter Cloud Bridge**.
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
 - Integration domain and component directory: `solar_inverter_bridge`.
-- Current source candidate: **0.9.0**, panel **0.20.0**, ledger schema **4**.
+- Current source candidate: **0.9.0**, panel **0.22.0**, ledger schema **4**.
 - Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
-The public repository is available as a HACS custom repository. Version 0.8.2 is
+The public repository is available as a HACS custom repository. Version 0.9.0 is
 a pre-release; default-catalog inclusion requires maintainer approval. Current
 checks and installation evidence are in [verification](../verification/README.md).
 

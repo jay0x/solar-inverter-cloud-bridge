@@ -86,7 +86,7 @@ Add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
 repositories**, category **Integration**, then download **Solar Inverter Cloud
 Bridge** and restart Home Assistant. Add the integration from **Settings → Devices
 & services**. The integration domain is `solar_inverter_bridge`.
-To select the `v0.8.2` pre-release, enable beta versions for the repository in HACS.
+To select the `v0.9.0` pre-release, enable beta versions for the repository in HACS.
 See [installation and collector setup](docs/INSTALL.md) before connecting a device.
 The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
 

@@ -29,7 +29,7 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 
 ## Profile composition
 
-Panel 0.20.0 consumes the backend `profile_layers` description. Recognition,
+Panel 0.22.0 consumes the backend `profile_layers` description. Recognition,
 enrollment review, Configuration, Connection and catalog details show the common
 map separately from a required model extension and qualification evidence. A common-only candidate
 uses **Use common map** without requiring an exact model name. Required corrections

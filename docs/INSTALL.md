@@ -157,7 +157,7 @@ Installation from the development branch was verified using HACS 2.0.5 on HA 202
 
 1. In HACS, open **Custom repositories**, add the repository URL and choose
    **Integration** as its category.
-2. Enable beta versions for the repository to select pre-release `v0.8.2`, download
+2. Enable beta versions for the repository to select pre-release `v0.9.0`, download
    **Solar Inverter Cloud Bridge**, and restart Home Assistant.
 3. Add the integration and configure the collector as described above.
 
