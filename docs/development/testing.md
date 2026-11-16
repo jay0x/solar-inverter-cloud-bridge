@@ -86,5 +86,13 @@ commands to run against an arbitrary HA host. Read local instructions, snapshot
 the affected configuration, preserve current maintenance preferences/IDs, and read back
 actual results. Do not send resets or electrical/schedule writes just to prove a UI.
 
+For frontend deployments, check served assets with both `Accept-Encoding: identity`
+and browser-style `Accept-Encoding: gzip, deflate, br`. Compare decompressed response
+hashes with the candidate. A stale precompressed `.gz` or `.br` sibling can shadow
+the new source file even when the on-disk source hash and an uncompressed HTTP check
+are correct. Preserve existing compressed files before replacing or removing only
+proven-stale copies through the authorized deployment mechanism. A cache-busting
+query string alone does not repair a stale compressed response.
+
 A completed fixed-candidate observation needs an unchanged fingerprint and a final
 recorded result. A running or interrupted process is not a passed 24-hour test.

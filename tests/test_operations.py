@@ -7,6 +7,7 @@ import tempfile
 import threading
 from time import monotonic
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from custom_components.solar_inverter_bridge.core.exchange import response_frame
 from custom_components.solar_inverter_bridge.core.framing import crc16
@@ -22,12 +23,16 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.storage = Storage(self.path)
         self.service = CollectorService(["127.0.0.1"], self.storage,
                                         now=lambda: datetime(2026, 11, 2, 12, 0, 0))
+        # The OS may allocate 38899 for port 0; this fixture has one active peer,
+        # not the production collector's separate auxiliary channel.
+        self.service.auxiliary_ports.clear()
         self.port = (await self.service.start())[0][1]
         self.registers = {address: 0 for address in required_addresses()}
         self.registers.update({171: 32771, 184: 4, 201: 2, 277: 480, 280: 50,
                                601: 1, 632: 1, 636: 2, 647: 20, 648: 80,
                                696: 2026, 697: 11, 698: 2, 699: 11, 700: 59, 701: 0})
         self.writes = []
+        self.reads = []
         self.write_seen = asyncio.Event()
         self.release_ack = asyncio.Event()
         self.release_ack.set()
@@ -77,6 +82,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
                     if crc16(request[:-2]) != int.from_bytes(request[-2:], "little"):
                         raise AssertionError("bad read request CRC")
                     address, count = int.from_bytes(rest[:2], "big"), int.from_bytes(rest[2:4], "big")
+                    self.reads.append((address, count))
                     writer.write(response_frame(tuple(self.registers.get(address + i, 0) for i in range(count))))
                 elif header[1] == 16:
                     meta = await reader.readexactly(5)
@@ -134,6 +140,46 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.storage.set_mode(self.device_id, "monitoring")
         self.assertEqual(await self.apply("one"), a)
         self.assertEqual(self.writes, [(601, (2,))])
+
+    async def test_clock_sync_ignores_read_delay_below_one_minute(self):
+        self.storage.set_clock_sync(self.device_id, True)
+        device = self.storage.device(self.device_id)
+        with patch.object(self.service, "apply", new_callable=AsyncMock) as apply:
+            self.assertIsNone(await self.service._maybe_clock(device, "2026-11-02T11:59:01"))
+            apply.assert_not_awaited()
+            self.assertIsNotNone(await self.service._maybe_clock(device, "2026-11-02T11:58:59"))
+            apply.assert_awaited()
+
+    async def test_settings_cadence_keeps_command_preflight_fresh(self):
+        with patch.object(self.service, "_maybe_clock", new_callable=AsyncMock) as clock:
+            await self.service.poll_once(self.device_id)
+            stamp = self.service._settings_observed[self.device_id]
+            self.assertIn((600, 12), self.reads)
+            self.reads.clear()
+            await self.service.poll_once(self.device_id)
+            self.assertNotIn((600, 12), self.reads)
+            self.assertEqual(self.service._settings_observed[self.device_id], stamp)
+            self.assertEqual(clock.await_count, 1, "A cached clock must not trigger clock synchronization")
+            self.registers[601] = 3
+            with self.assertRaisesRegex(ValueError, "baseline_conflict"):
+                await self.service.apply(self.device_id, "primary_output_priority", "sbu", "fresh-baseline", expected_value="sub")
+            self.assertIn((600, 12), self.reads)
+            self.assertEqual(self.writes, [])
+            self.service._settings_observed[self.device_id] -= 31
+            self.reads.clear()
+            await self.service.poll_once(self.device_id)
+            self.assertIn((600, 12), self.reads)
+            self.assertEqual(clock.await_count, 2)
+
+    async def test_new_session_never_reuses_settings_freshness(self):
+        await self.service.poll_once(self.device_id)
+        previous = self.service._settings_sessions[self.device_id]
+        self.service._disconnect(self.holder)
+        await self.reconnect()
+        self.reads.clear()
+        await self.service.poll_once(self.device_id)
+        self.assertIn((600, 12), self.reads)
+        self.assertIsNot(self.service._settings_sessions[self.device_id], previous)
 
     async def test_uuid_cannot_target_another_device(self):
         await self.apply("one")
@@ -299,14 +345,14 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((a["outcome"], b["outcome"]), ("confirmed", "confirmed"))
         self.assertEqual(self.writes, [(601, (2,)), (601, (3,))])
 
-    async def test_clock_limit_uses_fresh_registers_not_cached_time(self):
+    async def test_large_clock_drift_uses_fresh_registers_not_cached_time(self):
         self.storage.set_clock_sync(self.device_id, True)
         self.service.settings[self.device_id] = {"inverter_datetime": "2026-11-02T11:59:00"}
         self.registers[699] = 8
-        with self.assertRaisesRegex(ValueError, "clock_correction_too_large"):
-            await self.service.apply(self.device_id, "inverter_datetime", "2026-11-02T12:00:00",
-                                     "clock", clock_sync=True)
-        self.assertEqual(self.writes, [])
+        result = await self.service.apply(self.device_id, "inverter_datetime", "2026-11-02T12:00:00",
+                                          "clock", clock_sync=True)
+        self.assertEqual(result["outcome"], "confirmed")
+        self.assertEqual(self.writes, [(696, (2026, 11, 2, 12, 0, 0))])
 
     async def test_clock_target_is_computed_after_preflight(self):
         from unittest.mock import patch
@@ -409,12 +455,15 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         saved = self.storage.device(self.device_id)
         self.assertFalse(saved["enabled"])
         self.assertEqual(saved["poll_interval"], 20)
-        for interval in (0, 4, 301, True):
+        for interval in (0, 301, True, 1.5):
             with self.assertRaises(ValueError):
                 self.storage.set_collection(self.device_id, True, interval)
         with self.assertRaisesRegex(ValueError, "device_disabled"):
             await self.apply("paused")
         self.assertEqual(self.writes, [])
+
+        self.storage.set_collection(self.device_id, False, 1)
+        self.assertEqual(self.storage.device(self.device_id)["poll_interval"], 1)
 
     async def test_expired_verification_cannot_be_reused_for_enrollment(self):
         self.holder["verified_at"] -= 91

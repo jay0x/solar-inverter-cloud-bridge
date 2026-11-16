@@ -1,7 +1,7 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Current version: integration 0.8.2 / panel 0.16.1. Checks and hardware qualification
+Current source candidate: integration 0.9.0 / panel 0.20.0. Checks and hardware qualification
 are described in `docs/verification/README.md` in the source repository.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native
@@ -50,9 +50,9 @@ TCP client connection to port 502 on the inverter.
 | --- | --- | --- |
 | TCP 18899 | Mixed AT/binary admission; qualified active inverter channel | Current AT hardware reference uses it; binary path is simulator-tested |
 | TCP 38899 | Mixed admission; AT remains auxiliary for inverter I/O | The reference collector's second AT connection is not a second inverter or poller; a qualified binary connection is independent of the port |
-| TCP 502 | Mixed admission; experimental binary monitoring | Not a standard Modbus TCP service; per-port bind errors are reported |
+| TCP 502 | Mixed admission; binary or AT | Not a standard Modbus TCP service; per-port bind errors are reported |
 | UDP/TCP 53 | **No DNS listener in this integration** | DNS belongs to the router or an external resolver. Optional router interception sends requests there |
-| UDP 58899 / TCP 8899 | **Not used by this integration** | Some other projects use a UDP callback request and a separate TCP local session. That is a different connection path |
+| UDP 58899 / TCP 8899 | **Optional local callback** | Targeted UDP bootstrap opens a TCP session; full identity/profile checks and one inverter I/O owner still apply. Reference Wi-Fi.DTU readings and display-setting writes verified; see [qualification](https://github.com/jay0x/solar-inverter-cloud-bridge/blob/main/docs/verification/README.md) |
 | HTTPS / MQTT cloud endpoints | **Not used for inverter polling/control** | Vendor APIs and web apps are separate interfaces; account credentials are not required here |
 
 The same classifier runs on all three listeners; port numbers do not force a
@@ -147,7 +147,10 @@ carry PI30 or G-ASCII. The selected profile determines the inverter payload deco
 ## 5. Binary EyeBond transport
 
 The implementation is independently written from attributed community wire facts.
-It is experimental, not a complete manufacturer specification or a hardware claim.
+It is not a complete manufacturer specification. On the reference Wi-Fi.DTU, binary
+callback readings and qualified inverter writes, including the same path used for
+clock correction, have been verified. Collector module reset remains an AT command
+and is not available on a binary session.
 
 ### Envelope
 
@@ -215,13 +218,21 @@ silent probing for ten minutes, with a reportable shared-source ambiguity. Advan
 Auto/AT/Binary override applies to new connections, not to durable device identity.
 FC2 parameter 2 must yield a full PN; an FC1 prefix alone is insufficient.
 
-Initial read qualification tests outer routes 1/1 and 1/255 with inner slaves 1/5,
-at most four route/slave candidates under a 15 s budget (2 s per signature read).
-Replies must match TID, function and route exactly. No header-rewrite exception is
-enabled without firmware-specific evidence. One route and inverter per collector
-are supported. TIDs are not reused: the session closes before 16-bit wrap and waits
-for the collector to reconnect. Heartbeat time fields are collector liveness, not
-inverter clock-register writes.
+Initial read qualification tests outer routes 1/1 and 1/255 with inner slaves 1/5
+under a 15 s budget (2 s per signature read). The callback path additionally permits
+the fixed management-reply mapping observed on Wi-Fi.DTU 8.50.12.3 / AT 1.11:
+FC1 request 0/1 or FC2 request 1/1 may receive route **0x0102/255**. TID and function
+must still match. This exception is confined to callback management replies; it
+does not relax native FC4 routing or ordinary redirected-session checks.
+
+Only after a validated full-PN query is that route prepended to the native probe
+candidates, with slaves 1 and 5. There are at most six candidates within the same
+15 s budget. Native replies must match TID, function and route exactly and pass
+CRC, slave and profile checks. One route and inverter per collector are supported.
+TIDs are not reused: the session closes before 16-bit wrap and waits for the
+collector to reconnect. Callback heartbeat scheduling is capped at 20 s, while
+the binary heartbeat payload retains its interval value of 60 s. Heartbeat time
+fields are collector liveness, not inverter clock-register writes.
 
 ## 6. Inverter payload protocols
 

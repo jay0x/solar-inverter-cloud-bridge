@@ -43,6 +43,16 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
   if (request.type.endsWith('/status')) return structuredClone(state);
   if (request.type.endsWith('/network_hints')) return {ha_ip:'192.168.10.77',subnet:'192.168.10.0/24',router_ip:'192.168.10.1',dns_ip:'192.168.10.1',addresses:[{address:'192.168.10.77',network:'192.168.10.0/24',default:true}]};
   if (request.type.endsWith('/configure_network')) { state.allowed_sources=request.allowed_sources; if (request.bootstrap_preference) state.bootstrap_preference=request.bootstrap_preference; return {}; }
+  if (request.type.endsWith('/connect_collector')) {
+    const result={request_id:request.request_id,state:request.collector_ip?'waiting':'waiting_for_connection',collector_ip:request.collector_ip,sent:Boolean(request.collector_ip)};
+    state.connection_requests=[result];return structuredClone(result);
+  }
+  if (request.type.endsWith('/set_connection')) {
+    const device=state.devices.find(d=>d.device_id===request.device_id);
+    device.connection_options={method:request.method,collector_ip:request.collector_ip,callback_host:request.callback_host,callback_port:request.callback_port,udp_port:request.udp_port};
+    const result={request_id:request.request_id,device_id:request.device_id,state:device.enabled?'waiting':'saved_paused',sent:device.enabled};
+    state.connection_requests=[result];return structuredClone(result);
+  }
   if (request.type.endsWith('/compatibility')) {
     if (request.action==='start') state.compatibility={active:true,report_id:'report-test',events:1,wire_bytes:0,remaining_seconds:120};
     if (request.action==='stop') state.compatibility.active=false;
@@ -98,6 +108,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
   fs.mkdirSync(out, {recursive: true});
   const panel = () => page.locator("solar-inverter-bridge-panel");
   const refresh = () => page.evaluate(() => window.testPanel._load());
+  const highlighted = action => page.locator(`[data-action="${action}"]`).evaluate(button=>button.classList.contains('primary'));
   const overflow = async () => assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "page overflows horizontally");
   const edit = async key => {
     if (!await page.locator('#edit-'+key).count()) await page.locator(`[data-action="edit"][data-value="${key}"]`).click();
@@ -240,16 +251,23 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(diagnostic.schema,2);
     assert.equal(diagnostic.parameter_inventory.length,51);
     assert.equal(diagnostic.recent_issues[0].register_address,630);
-    assert.equal(diagnostic.frontend.version,'0.16.1');
+    assert.equal(diagnostic.frontend.version,'0.20.0');
     console.log('PASS timestamped issue in HA time zone and backend diagnostics download');
 
     await page.evaluate(() => window.testPanel._navigate("sib/device/test-device/settings"));
     assert.equal(await page.locator("#auto-reset").isChecked(), false);
+    assert.equal(await highlighted('auto-reset'),false);
+    await page.locator("#auto-reset").check();
+    assert.equal(await highlighted('auto-reset'),true);
+    await page.locator("#auto-reset").uncheck();
+    assert.equal(await highlighted('auto-reset'),false);
     await page.locator("#auto-reset").check();
     await refresh();
     assert.equal(await page.locator("#auto-reset").isChecked(), true);
+    assert.equal(await highlighted('auto-reset'),true);
     await page.getByRole("button", {name: "Save recovery setting"}).click();
     await page.waitForFunction(() => state.devices[0].auto_reset === true);
+    assert.equal(await highlighted('auto-reset'),false);
     await page.locator("#auto-reset").uncheck();
     await page.getByRole("button", {name: "Save recovery setting"}).click();
     await page.waitForFunction(() => state.devices[0].auto_reset === false);
@@ -601,6 +619,90 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await refresh();
     console.log('PASS explicit PI30 dialect recheck preserves selection; unsupported numeric choices never reach Apply');
 
+    await page.evaluate(()=>{state.pending=[];testPanel._drafts={};testPanel._navigate('sib/add/1');});
+    const connectionCount=()=>page.evaluate(()=>calls.filter(c=>c.type.endsWith('/connect_collector')).length);
+    const beforeCallback=await connectionCount();
+    await page.locator('#connection-method').selectOption('callback');
+    await page.getByRole('button',{name:'Connect collector',exact:true}).click();
+    assert.equal(await connectionCount(),beforeCallback);
+    await page.locator('#collector-ip').fill('192.168.10.58');
+    await refresh();
+    assert.equal(await page.locator('#collector-ip').inputValue(),'192.168.10.58');
+    await page.getByRole('button',{name:'Connect collector',exact:true}).click();
+    await page.waitForFunction(()=>state.connection_requests?.[0]?.state==='waiting');
+    const callbackRequest=await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/connect_collector')).at(-1));
+    assert.equal(callbackRequest.method,'callback');
+    assert.equal(callbackRequest.callback_host,'192.168.10.77');
+    assert.equal(callbackRequest.callback_port,8899);assert.equal(callbackRequest.udp_port,58899);
+    await page.reload();
+    await page.getByRole('heading',{name:'Connect your Wi-Fi collector',exact:true}).waitFor();
+    assert.equal(await connectionCount(),0,'Reload must not automatically resend a callback');
+    assert.equal(await page.locator('#collector-ip').inputValue(),'192.168.10.58');
+    await page.getByRole('button',{name:'Connect collector',exact:true}).click();
+    assert.equal(await page.evaluate(()=>calls.find(c=>c.type.endsWith('/connect_collector')).request_id),callbackRequest.request_id);
+    await page.evaluate(()=>{state.connection_requests[0].state='disconnected';});
+    await refresh();
+    await page.getByRole('button',{name:'Retry connection',exact:true}).click();
+    assert.notEqual(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/connect_collector')).at(-1).request_id),callbackRequest.request_id);
+    await page.evaluate(()=>{testPanel._drafts={};testPanel._saveDrafts();testPanel._navigate('sib/device/test-device/settings');});
+    await refresh();
+    console.log('PASS callback setup: required IP, persisted drafts/request ID, local TCP target and no automatic resend on reload');
+
+    await page.evaluate(()=>testPanel._navigate('sib/device/test-device/connection'));
+    assert.equal(await page.locator('#connection-method').inputValue(),'redirect');
+    assert.equal(await highlighted('save-connection'),false);
+    assert.equal(await highlighted('poll-options'),false);
+    assert.equal(await highlighted('network'),false);
+    const originalSources=await page.locator('#allowed-sources').inputValue();
+    await page.locator('#allowed-sources').fill(originalSources+', '+originalSources);
+    assert.equal(await highlighted('network'),false,'Repeated sources do not change the saved allowlist');
+    await page.locator('#allowed-sources').fill(originalSources+', 192.168.20.1');
+    assert.equal(await highlighted('network'),true);
+    await page.locator('#allowed-sources').fill(originalSources);
+    assert.equal(await highlighted('network'),false);
+    assert.equal(await page.getByLabel('Pause between polls, seconds').getAttribute('min'),'1');
+    assert.match(await panel().innerText(),/new setting writes are paused/);
+    await page.locator('#poll-interval').fill('0');
+    assert.equal(await highlighted('poll-options'),true);
+    const collectionCount=await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_collection')).length);
+    await page.getByRole('button',{name:'Save collection settings',exact:true}).click();
+    assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_collection')).length),collectionCount);
+    await page.locator('#poll-interval').fill('10');
+    assert.equal(await highlighted('poll-options'),false);
+    await page.locator('#poll-interval').fill('1');
+    await refresh();
+    assert.equal(await highlighted('poll-options'),true,'Refresh must retain the dirty highlight without replacing the active input');
+    await page.locator('#poll-enabled').uncheck();
+    await page.getByRole('button',{name:'Save collection settings',exact:true}).click();
+    await page.waitForFunction(()=>state.devices[0].poll_interval===1 && !state.devices[0].enabled);
+    assert.equal(await highlighted('poll-options'),false);
+    await page.locator('#connection-method').selectOption('callback');
+    assert.equal(await highlighted('save-connection'),true);
+    await page.locator('#connection-method').selectOption('redirect');
+    assert.equal(await highlighted('save-connection'),false);
+    await page.locator('#connection-method').selectOption('callback');
+    await page.locator('#collector-ip').fill('192.168.10.58');
+    await refresh();
+    assert.equal(await page.locator('#connection-method').inputValue(),'callback');
+    await page.getByRole('button',{name:'Save connection',exact:true}).click();
+    await page.waitForFunction(()=>state.devices[0].connection_options?.method==='callback');
+    assert.equal(await highlighted('save-connection'),false);
+    const savedConnection=await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1));
+    assert.equal(savedConnection.device_id,'test-device');
+    assert.equal(savedConnection.collector_ip,'192.168.10.58');
+    assert.equal(await page.locator('#collector-ip').inputValue(),'192.168.10.58');
+    assert.match(await panel().innerText(),/Connection preference saved/);
+    assert.equal(await page.evaluate(()=>state.devices.length),1);
+    for (const width of [360,1440]) {await page.setViewportSize({width,height:1000});await overflow();}
+    await page.locator('#connection-method').selectOption('redirect');
+    await page.getByRole('button',{name:'Save connection',exact:true}).click();
+    await page.waitForFunction(()=>state.devices[0].connection_options?.method==='redirect');
+    assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1).collector_ip),'');
+    await page.locator('#poll-enabled').check();
+    await page.getByRole('button',{name:'Save collection settings',exact:true}).click();
+    await page.waitForFunction(()=>state.devices[0].enabled);
+    console.log('PASS existing connection editing, retained enrollment, paused-save explanation and validated one-second polling pause');
+
     await page.evaluate(() => {window.originalTestDevices=structuredClone(state.devices);state.devices[0].capabilities={inverter_write:false,module_reset:false};state.devices[0].transport='binary';state.devices[0].capability_reason='Binary monitoring only';testPanel._navigate('sib/device/test-device/settings');});
     await refresh();
     assert.equal(await page.locator('[data-action="edit"]').count(),0);
@@ -634,8 +736,10 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await page.getByRole('button',{name:'Stop collection',exact:true}).click();
     await page.locator('summary').filter({hasText:'Advanced: silent collector bootstrap'}).click();
     await page.locator('#bootstrap-preference').selectOption('binary');
+    assert.equal(await highlighted('bootstrap-save'),true);
     await page.getByRole('button',{name:'Save bootstrap preference',exact:true}).click();
     assert.equal(await page.evaluate(() => state.bootstrap_preference),'binary');
+    assert.equal(await highlighted('bootstrap-save'),false);
     await page.evaluate(() => {testPanel._reportOpen=false;state.devices=structuredClone(window.originalTestDevices);testPanel._navigate('sib');});
     console.log('PASS binary capability locks and zero-device report workflow: metadata, coverage, ZIP, explicit raw opt-in, stop and override');
 

@@ -5,7 +5,7 @@
 - Product: **Solar Inverter Cloud Bridge**.
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
 - Integration domain and component directory: `solar_inverter_bridge`.
-- Current candidate: **0.8.2**, panel **0.16.1**, ledger schema **4**.
+- Current source candidate: **0.9.0**, panel **0.20.0**, ledger schema **4**.
 - Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
 The public repository is available as a HACS custom repository. Version 0.8.2 is
@@ -16,6 +16,9 @@ checks and installation evidence are in [verification](../verification/README.md
 
 HACS installs the single integration under `custom_components/solar_inverter_bridge`.
 All runtime assets, translations and brand images are inside that directory.
+Updating over an older HACS download can leave a stale precompressed frontend asset
+beside the new source. Verify gzip-negotiated responses before concluding that the
+browser is showing the installed panel.
 `hacs.json` supplies the product name and minimum HA version. No `zip_release` mode
 is configured: the manual-install ZIP layout is not a HACS ZIP layout.
 

@@ -6,6 +6,13 @@ notices, including the MIT notice for inherited portions, are preserved in
 
 ## Protocol sources
 
+Local callback wire fact: `set>server=<IPv4>:<port>;` over targeted UDP 58899, then
+a reverse TCP session. Cross-reference:
+[ha-dessmonitor scanner at 83401de](https://github.com/andreas-glaser/ha-dessmonitor/blob/83401de638d3fe5bc290801edba7df2542a28964/custom_components/dessmonitor/local/scanner.py)
+and the pinned ha-eybond-local collector callback/discovery code. The implementation
+is independent, sends only the canonical form and does not imply UDP telemetry or
+hardware qualification for a specific firmware.
+
 | Source | Pinned evidence and boundary |
 | --- | --- |
 | [SRNE Modbus v1.96 document](https://github.com/syssi/esphome-smg-ii/blob/b0ff1caec3ce395d774fcf496fcc03a75f925ca2/docs/SRNE.Solar.Charge.Inverter.MODBUS.Protocol1.96.pdf) | Unsigned voltage/frequency/power, phase-A scope, positive-discharge current, per-12-V battery settings and 32-register read limit. Rated-voltage text is read-only despite a conflicting table annotation |

@@ -420,7 +420,7 @@ class Storage:
         self.call(write)
 
     def set_collection(self, device_id, enabled, poll_interval):
-        if type(enabled) is not bool or type(poll_interval) is not int or not 5 <= poll_interval <= 300:
+        if type(enabled) is not bool or type(poll_interval) is not int or not 1 <= poll_interval <= 300:
             raise ValueError("invalid_collection_options")
         def write():
             cursor = self.db.execute("UPDATE devices SET policy_revision=policy_revision+(enabled != ?), enabled=?, poll_interval=? WHERE device_id=?",

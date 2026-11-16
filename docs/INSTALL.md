@@ -1,15 +1,15 @@
 # Install and operate Solar Inverter Cloud Bridge
 
-Version 0.8.2 is a pre-release available through a HACS custom repository. The integration runs
+The current source candidate is 0.9.0; consult release notes for tagged-release features. The integration runs
 inside Home Assistant Core. It does not require a Supervisor app, MQTT, or a separate
 frontend plugin. The current target is Home Assistant Core 2026.10.4.
 
 Read [Ports, collector protocols, and inverter profiles](PROTOCOLS_AND_PROFILES.md)
-for the current support matrix and experimental binary limitations. The reference is included
+for the current support matrix. The reference binary and AT paths are included
 in the manual-install ZIP and maintained with the GitHub source.
 
 The [profile guide](PROFILE_EXPANSION.md) describes recognition and the implemented
-settings. Current version: 0.8.2. Installation is available through HACS or the
+settings. Installation is available through HACS or the
 reviewed source tree. Collector communication runs locally without a vendor-cloud account.
 The [named-model and family register](DEVICE_COMPATIBILITY.md) includes experimental
 and unresolved devices with sources and transport qualifications. If the standard
@@ -53,6 +53,98 @@ some collectors to reconnect both channels.
 The Home Assistant server must expose the collector's listener port. All three
 ports have bound on the test HAOS VM; partial failures are shown separately. Other container/network layouts still need
 their own verification.
+
+### Local callback and connection selection
+
+The Connect step offers **Automatic**, **Local connection (UDP callback)** and
+**Redirected cloud connection**. An IP is optional in Automatic: with an IP it
+requests a local callback; without one it waits for an incoming redirected connection.
+Callback requires the Wi-Fi collector's private IPv4 address. Existing installations
+are not automatically switched to callback.
+
+The default bootstrap sends `set>server=<HA IPv4>:8899;` to collector UDP 58899.
+The collector then connects to HA over TCP. The callback does not subscribe to UDP
+telemetry. Both reads and supported writes use the negotiated AT/binary TCP session.
+Entering an IP does not by itself enable or disable settings.
+
+The HA callback address must be a local HA interface address. TCP and UDP ports can
+be overridden in Callback network settings. The source allowlist still applies,
+and the observed TCP source must match the collector IP. Address-translating NAT
+callback paths are not qualified by this implementation. Use redirected connection
+setup for those paths.
+
+A request has a 120-second connection window. Repeating a retained attempt ID does
+not resend; a visible Retry connection action creates a new attempt. Attempt IDs
+are bounded runtime state, unlike the durable IDs used for inverter writes.
+Saved callback devices retry only while collection is enabled and disconnected,
+at most once per 120 seconds. A full-identity mismatch blocks automatic attempts for
+that runtime. Review the collector identity rather than accepting a different device.
+The connection preference is saved with the HA config entry after enrollment.
+
+For an existing inverter, open **Inverters → your inverter → Connection → Connection
+method**. Select Automatic, Local connection (UDP callback), or Redirected cloud
+connection; supply the collector IP and, if needed, the callback network fields.
+Select **Save connection**. You do not need to remove or enroll the inverter again:
+its identity, entities, names and history are retained.
+
+Saving waits for the current polling exchange and serializes with commands. An
+unresolved operation must be resolved first. The selected channel becomes the sole
+inverter I/O owner; other connected channels can remain heartbeat-only. Local callback
+selects the configured source IP and TCP port and checks the same full collector
+identity. Redirected mode selects a non-callback channel and still requires DNS/router
+routing to this HA. Automatic retains a usable owner and requests callback only when
+disconnected and an IP is provided. A saved preference or sent UDP request is not
+proof of a working connection; check the active port and fresh readings.
+Readings, supported setting writes, and clock sync work on AT and Binary EyeBond.
+Restart Wi-Fi module is an AT command. It is unavailable on Binary EyeBond, including
+the confirmed local callback. A redirected connection normally negotiates AT and keeps
+that command. The connection step and Configuration page state this limitation.
+
+With **Collect readings** unchecked, saving only stores the connection preference
+and does not send a callback. Enable collection to resume polling and automatic
+callback attempts. An expired or failed attempt has an explicit **Retry connection**
+action; browser reload does not resend it.
+
+Callback may affect an existing vendor-cloud session depending on firmware. The
+software uses a single inverter owner and does not run a parallel callback poller.
+That ownership lock is local to one runtime; it cannot coordinate another HA or a
+vendor cloud. On the reference Wi-Fi.DTU 8.50.12.3 / AT 1.11 collector, binary callback
+readings and reversible display-setting writes were verified without redirecting DNS
+to the callback receiver. A passive redirected connection plus active callback also
+worked. Here, passive means TCP/heartbeats with collection disabled, not native
+inverter polling or writes. Simultaneous command workflows on both connections
+produced a preflight timeout and are not supported as a two-controller setup.
+These tests used another Bridge as the redirected endpoint, not the vendor server.
+
+Callback heartbeat scheduling is capped at 20 seconds to keep an otherwise idle
+connection alive. This does not change TCP transaction deadlines. There is no
+automatic callback-over-cloud priority switch in Automatic mode; choose Local
+connection explicitly to select the callback path.
+See the source repository's
+[verification guide](https://github.com/jay0x/solar-inverter-cloud-bridge/blob/main/docs/verification/README.md)
+for the hardware scope and timings of its documented candidate.
+
+### Polling cadence
+
+**Pause between polls, seconds** accepts whole seconds from **1 to 300**. The pause
+starts after a completed telemetry cycle. A 10-second cycle with a 1-second pause
+starts the next cycle about 11 seconds later, with possible scheduler delay. Polls
+for one inverter never overlap and missed starts do not accumulate in a queue.
+Existing saved values are retained; the API/storage key remains `poll_interval`.
+
+Settings refresh
+on the first poll of each connection, then at least 30 seconds apart (or the telemetry
+interval if longer), and after writes or profile renewal. A skipped settings read
+does not refresh its timestamp. Commands always read fresh identity/settings before
+writing and independently read back afterward. Clock synchronization uses only a
+new clock reading, not a cached clock value. TCP transaction timeouts are unchanged.
+
+**Collect readings** is a per-inverter pause switch. Unchecking it stops regular
+polling, automatic callback attempts and new inverter-setting writes. An exchange
+already in progress may finish. Existing sockets may retain heartbeats. This does
+not stop the physical inverter, remove its entities or delete Recorder history;
+current telemetry is presented as unavailable while collection is paused. Use it
+for maintenance or when another controller is responsible for polling.
 
 ### HACS custom-repository installation
 
@@ -114,7 +206,9 @@ If a different value is confirmed by a fresh read, **Keep current value** can cl
 the request without resending it. The original outcome remains in the journal.
 
 Clock sync is off by default, requires its own enable switch, and uses HA's local time zone.
-Corrections larger than five minutes are refused. A later readback may resolve an
+It corrects any difference of **one minute or more**, including differences of several hours.
+A shorter difference is ignored because reading the clock itself takes several seconds.
+There is no upper limit. A later readback may resolve an
 uncertain clock operation by comparing its expected elapsed time; it does not erase
 the original uncertainty.
 
@@ -191,7 +285,8 @@ Saved enrollment, maintenance preferences, and operations live in
 the only authority for command policy and the operation journal. Sensor history
 belongs to Recorder. Display names and areas belong to Home Assistant's device
 registry; renaming a device there does not require editing the bridge database.
-The config entry stores allowed collector sources and an optional bootstrap preference. Do not edit HA's `.storage`
+The config entry stores allowed collector sources, an optional bootstrap preference,
+and per-device connection preferences. Do not edit HA's `.storage`
 files. A database that fails `quick_check` is not opened.
 
 The ledger uses schema 4. Profile acceptance binds the device to the map/control
@@ -217,14 +312,34 @@ UUIDs are not automatically deleted: reaching capacity refuses new writes but ke
 existing results. An administrator can download the journal in pages. That export
 does not purge IDs. Identical faults are persisted at most once a minute.
 
+## Updating an existing installation
+
+Copy or download the reviewed source over the existing component, then restart
+Home Assistant Core so Python changes load. A config-entry reload alone does not
+reload Python modules. Enrollment IDs, entity overrides, polling preferences and
+the operation ledger are retained. Existing devices remain on redirected connection
+until an administrator explicitly saves another method.
+
+After a HACS or manual update, also remove or replace stale precompressed siblings
+such as `frontend/panel.js.gz` when their decompressed content differs from the new
+source. Home Assistant can serve that sibling to browsers requesting gzip even though
+the uncompressed file and its hash are current. Compare both uncompressed and
+gzip-negotiated responses, as described in the testing guide. A browser reload or
+version query string does not correct a stale compressed asset.
+
+The panel highlights a save button only while its own section differs from the saved
+values. **Save connection** and **Save collection settings** are independent: changing
+the polling pause does not save the connection method.
+
 ## Evidence and remaining validation
 
-Protocol 4/model 32771 has live read evidence on the test VM. Other model signatures
-are not automatically admitted. The 16-device test is synthetic, not a claim of
-hardware validation for 16 installations. Parameter writes, loss of reply, cancellation,
-and restart boundaries are tested with simulators. Electrical/schedule writes have
-not been exercised on the operating inverter by this acceptance session.
-Binary EyeBond and additional Modbus/PI30/PI18/G-ASCII profiles are source-derived
+Protocol 4/model 32771 has redirected-path and local-callback read evidence on the
+reference ANENJI installation. Reversible display-setting writes were also verified
+on both paths; electrical and schedule writes were not part of that acceptance.
+Other model signatures are not automatically admitted. The 16-device test is synthetic,
+not a claim of hardware validation for 16 installations. Loss of reply, cancellation,
+and restart boundaries are tested with simulators.
+Additional Modbus/PI30/PI18/G-ASCII profiles are source-derived
 and simulator-tested, without new local hardware qualification. The original exact
 gate remains 4/32771. Other profiles are offered after read-based recognition and
 require explicit acceptance. The profile warning/acceptance covers implemented

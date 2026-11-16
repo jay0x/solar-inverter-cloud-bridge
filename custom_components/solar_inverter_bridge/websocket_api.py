@@ -19,6 +19,8 @@ def async_register(hass):
     websocket_api.async_register_command(hass, ws_status)
     websocket_api.async_register_command(hass, ws_network_hints)
     websocket_api.async_register_command(hass, ws_verify)
+    websocket_api.async_register_command(hass, ws_connect_collector)
+    websocket_api.async_register_command(hass, ws_set_connection)
     websocket_api.async_register_command(hass, ws_enroll)
     websocket_api.async_register_command(hass, ws_set_clock_sync)
     websocket_api.async_register_command(hass, ws_set_auto_reset)
@@ -90,6 +92,71 @@ def _field(key):
     return next(field for field in FIELDS if field.key == key)
 
 
+async def _connection_options(hass, msg):
+    from .core.callback import options
+    from .network_hints import async_network_hints
+    config = options(msg["method"], msg["collector_ip"].strip(), msg["callback_host"].strip(), msg["callback_port"], msg["udp_port"])
+    if config["collector_ip"]:
+        hints = await async_network_hints(hass)
+        if config["callback_host"] not in {x["address"] for x in hints["addresses"]}:
+            raise ValueError("callback_host_not_local")
+    return config
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "solar_inverter_bridge/set_connection",
+    vol.Required("device_id"): str,
+    vol.Required("request_id"): OPERATION_ID,
+    vol.Required("method"): vol.In(["auto", "callback", "redirect"]),
+    vol.Optional("collector_ip", default=""): str,
+    vol.Optional("callback_host", default=""): str,
+    vol.Optional("callback_port", default=8899): int,
+    vol.Optional("udp_port", default=58899): int,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_set_connection(hass, connection, msg):
+    entry = _runtime(hass)
+    if entry is None:
+        connection.send_error(msg["id"], "not_found", "bridge_not_loaded")
+        return
+    try:
+        config = await _connection_options(hass, msg)
+        def persist(record):
+            records = {**entry.options.get("collector_connections", {}), msg["device_id"]: record}
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "collector_connections": records})
+        result = await entry.runtime_data["service"].callback.change(msg["request_id"], msg["device_id"], config, persist)
+    except (ValueError, OSError, StorageError) as error:
+        connection.send_error(msg["id"], "connection_failed", str(error))
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "solar_inverter_bridge/connect_collector",
+    vol.Required("request_id"): OPERATION_ID,
+    vol.Optional("method", default="auto"): vol.In(["auto", "callback", "redirect"]),
+    vol.Optional("collector_ip", default=""): str,
+    vol.Optional("callback_host", default=""): str,
+    vol.Optional("callback_port", default=8899): int,
+    vol.Optional("udp_port", default=58899): int,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_connect_collector(hass, connection, msg):
+    entry = _runtime(hass)
+    if entry is None:
+        connection.send_error(msg["id"], "not_found", "bridge_not_loaded")
+        return
+    try:
+        config = await _connection_options(hass, msg)
+        result = await entry.runtime_data["service"].callback.connect(msg["request_id"], config)
+    except (ValueError, OSError) as error:
+        connection.send_error(msg["id"], "connection_failed", str(error))
+        return
+    connection.send_result(msg["id"], result)
+
+
 @websocket_api.websocket_command({
     vol.Required("type"): "solar_inverter_bridge/verify",
     vol.Required("collector_sha256"): str,
@@ -154,6 +221,7 @@ async def ws_profile(hass,connection,msg):
     vol.Required("type"): "solar_inverter_bridge/enroll",
     vol.Required("collector_sha256"): str,
     vol.Required("name"): str,
+    vol.Optional("connection_request_id"): OPERATION_ID,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -167,7 +235,18 @@ async def ws_enroll(hass, connection, msg):
         connection.send_error(msg["id"], "not_found", "bridge_not_loaded")
         return
     try:
-        device_id = await entry.runtime_data["service"].enroll(msg["collector_sha256"], name)
+        service = entry.runtime_data["service"]
+        request_id = msg.get("connection_request_id")
+        if request_id:
+            service.callback.enrollment_options(request_id, msg["collector_sha256"])
+        device_id = await service.enroll(msg["collector_sha256"], name)
+        if request_id:
+            if await hass.async_add_executor_job(entry.runtime_data["storage"].has_unresolved, device_id):
+                raise StorageError("device_busy_or_unresolved")
+            record = service.callback.bind(request_id, device_id, msg["collector_sha256"])
+            records = {**entry.options.get("collector_connections", {}), device_id: record}
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "collector_connections": records})
+            service.callback.configure(records)
     except (ValueError, StorageError) as err:
         connection.send_error(msg["id"], "unknown_error", str(err))
         return
@@ -300,7 +379,7 @@ async def ws_configure_network(hass, connection, msg):
     vol.Required("type"): "solar_inverter_bridge/set_collection",
     vol.Required("device_id"): str,
     vol.Required("enabled"): bool,
-    vol.Required("poll_interval"): vol.All(int, vol.Range(min=5, max=300)),
+    vol.Required("poll_interval"): vol.All(int, vol.Range(min=1, max=300)),
 })
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -357,6 +436,10 @@ async def ws_remove_device(hass, connection, msg):
         return
     try:
         await entry.runtime_data["service"].remove_device(msg["device_id"])
+        records = dict(entry.options.get("collector_connections", {}))
+        if records.pop(msg["device_id"], None) is not None:
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "collector_connections": records})
+            entry.runtime_data["service"].callback.configure(records)
         from .device_management import cleanup_removed_devices
         removed_ids = await hass.async_add_executor_job(entry.runtime_data["storage"].removed_device_ids)
         cleanup_removed_devices(hass, entry, removed_ids)

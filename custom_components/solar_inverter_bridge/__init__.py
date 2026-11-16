@@ -64,6 +64,7 @@ async def async_setup_entry(hass, entry):
         bootstrap_preference=entry.options.get("bootstrap_preference", "auto"),
     )
     try:
+        service.callback.configure(entry.options.get("collector_connections", {}))
         service.restore_issues(await hass.async_add_executor_job(storage.recent_diagnostics))
         await service.start(host="0.0.0.0", ports=PORTS)
         hass.data.setdefault(DOMAIN, {}).pop("failed_listeners", None)
@@ -86,9 +87,11 @@ async def async_setup_entry(hass, entry):
 
     async def update_options(hass, updated_entry):
         from .core.identity import normalize_sources
-        if updated_entry.runtime_data is not None:
-            updated_entry.runtime_data["service"].sources = tuple(normalize_sources(updated_entry.options.get("allowed_sources", [])))
-            updated_entry.runtime_data["service"].set_bootstrap_preference(updated_entry.options.get("bootstrap_preference", "auto"))
+        runtime = getattr(updated_entry, "runtime_data", None)
+        if runtime is not None:
+            runtime["service"].sources = tuple(normalize_sources(updated_entry.options.get("allowed_sources", [])))
+            runtime["service"].set_bootstrap_preference(updated_entry.options.get("bootstrap_preference", "auto"))
+            runtime["service"].callback.configure(updated_entry.options.get("collector_connections", {}))
 
     entry.async_on_unload(entry.add_update_listener(update_options))
     from .services import async_register as register_services
@@ -123,7 +126,7 @@ async def _register_panel(hass):
     from homeassistant.components import frontend
 
     panel_path = Path(__file__).parent / "frontend" / "panel.js"
-    module_url = "/solar_inverter_bridge/panel.js?v=0.16.1"
+    module_url = "/solar_inverter_bridge/panel.js?v=0.20.0"
     state = hass.data.setdefault(DOMAIN, {})
     if not state.get("static_registered"):
         await hass.http.async_register_static_paths([

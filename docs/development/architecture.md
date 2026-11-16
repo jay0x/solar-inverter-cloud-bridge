@@ -44,6 +44,24 @@ Admin action / native setter / panel / optional clock service
 
 All three ports share dialect detection. A port is a bootstrap hint, not identity.
 AT on 38899 stays auxiliary; it is not promoted into another inverter poller.
+`core/callback.py` sends targeted UDP bootstrap requests and lazily opens a TCP
+callback listener, default 8899. Its sockets enter the same admission/ownership path.
+Callback source and full PN are checked, and an active owner is never replaced
+merely because another socket appears. Saved connection preferences do not add a
+second poller. No broadcast scan or UDP telemetry decoder is implemented.
+Callback management replies have a narrow, hardware-observed fixed-route mapping;
+only a validated full-PN query promotes that route to a native probe candidate.
+Native FC4 correlation remains exact. Callback heartbeat scheduling is capped at
+20 seconds, including when native collection is paused; transaction deadlines are
+unchanged. Ownership is local to this runtime, not a distributed lock across HA
+instances or a vendor cloud. There is no automatic callback-primary migration of
+an existing redirected owner.
+An explicit Connection edit gates new polling, waits for an existing cycle and
+serializes with the device command lock and old stream lock. It saves config-entry
+preferences without replacing enrollment. Owner selection then follows the chosen
+method; nonselected live channels remain passive. Callback admission is pinned to
+the enrolled full identity. A failed send remains a saved preference with an attempt
+failure, not a confirmed connection. Paused devices save without sending UDP.
 Failed binds are reported separately while healthy listeners remain available.
 All-listener failure refuses setup; no random fallback port is chosen.
 

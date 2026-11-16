@@ -20,8 +20,10 @@
 - One integration in Home Assistant Core; domain `solar_inverter_bridge`, product
   name Solar Inverter Cloud Bridge. Retain the technical domain and existing IDs
   when changing branding. Do not add an app, MQTT bridge or second runtime.
-- Current collector transports are mixed AT/binary EyeBond on TCP 502/18899/38899.
-  Do not introduce UDP callback, direct serial, vendor HTTP or cloud forwarding as
+- Collector transports are mixed AT/binary EyeBond on TCP 502/18899/38899 and an
+  optional local callback listener (default TCP8899), requested via targeted UDP58899.
+  UDP bootstraps TCP; it does not carry inverter telemetry. Preserve the existing
+  TCP transaction timeouts. Do not add serial, vendor HTTP or cloud forwarding as
   an incidental refactor. A port or brand does not establish an inverter profile.
 - Keep one active inverter I/O owner per physical path. Reconnect/restart never
   replays writes. New writes require durable intent and independent readback.

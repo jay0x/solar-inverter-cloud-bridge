@@ -39,6 +39,100 @@ async def test_brand_rename_preserves_custom_config_entry_title(hass,entry):
     assert entry.domain==DOMAIN
 
 
+async def test_callback_api_checks_local_address_and_admin(hass,entry,hass_ws_client,hass_read_only_access_token,monkeypatch):
+    from custom_components.solar_inverter_bridge import network_hints
+    monkeypatch.setattr(network_hints,"async_network_hints",AsyncMock(return_value={"addresses":[{"address":"192.168.50.10"}]}))
+    callback=entry.runtime_data["service"].callback
+    connect=AsyncMock(return_value={"state":"waiting"})
+    monkeypatch.setattr(callback,"connect",connect)
+    client=await hass_ws_client(hass)
+    request={"type":DOMAIN+"/connect_collector","request_id":"21bd4749-b10f-4593-b050-41b29bd03741",
+        "method":"callback","collector_ip":"192.168.50.20","callback_host":"192.168.50.10"}
+    await client.send_json_auto_id(request)
+    assert (await client.receive_json())["success"]
+    assert connect.await_count==1
+    await client.send_json_auto_id({**request,"callback_host":"192.168.50.99"})
+    assert not (await client.receive_json())["success"]
+    reader=await hass_ws_client(hass,access_token=hass_read_only_access_token)
+    await reader.send_json_auto_id(request)
+    assert not (await reader.receive_json())["success"]
+    assert connect.await_count==1
+
+
+async def test_callback_choice_persists_on_enrollment_and_reload(hass,entry,hass_ws_client,monkeypatch):
+    import socket
+    from custom_components.solar_inverter_bridge import network_hints
+    from custom_components.solar_inverter_bridge.core import callback
+    monkeypatch.setattr(network_hints,"async_network_hints",AsyncMock(return_value={"addresses":[{"address":"192.168.50.10"}]}))
+    sender=AsyncMock()
+    monkeypatch.setattr(callback,"send_callback",sender)
+    service,storage=entry.runtime_data["service"],entry.runtime_data["storage"]
+    service.sources=("192.168.50.0/24",)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1",0));port=sock.getsockname()[1]
+    client=await hass_ws_client(hass)
+    request_id="46c55a20-e74d-42f1-bfbf-ab21ff2e0f80"
+    await client.send_json_auto_id({"type":DOMAIN+"/connect_collector","request_id":request_id,
+        "method":"callback","collector_ip":"192.168.50.20","callback_host":"192.168.50.10","callback_port":port})
+    assert (await client.receive_json())["success"]
+    identity="c"*64
+    assert service.callback.admit("192.168.50.20",port,identity)
+    identifier=await hass.async_add_executor_job(storage.enroll,identity,"Callback","modbus_protocol_4")
+    await hass.async_add_executor_job(storage.set_collection,identifier,False,10)
+    monkeypatch.setattr(service,"enroll",AsyncMock(return_value=identifier))
+    await client.send_json_auto_id({"type":DOMAIN+"/enroll","collector_sha256":identity,"name":"Callback","connection_request_id":request_id})
+    assert (await client.receive_json())["success"]
+    saved=entry.options["collector_connections"][identifier]
+    assert saved["collector_ip"]=="192.168.50.20" and saved["method"]=="callback"
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data["service"].callback.saved[identifier]==saved
+    assert sender.await_count==1
+
+
+async def test_existing_connection_edit_preserves_enrollment_and_pause_one_second(hass,entry,hass_ws_client,hass_read_only_access_token,monkeypatch):
+    import socket
+    from custom_components.solar_inverter_bridge import network_hints
+    from custom_components.solar_inverter_bridge.core import callback
+    monkeypatch.setattr(network_hints,"async_network_hints",AsyncMock(return_value={"addresses":[{"address":"127.0.0.1"}]}))
+    sender=AsyncMock()
+    monkeypatch.setattr(callback,"send_callback",sender)
+    storage=entry.runtime_data["storage"]
+    identifier=await hass.async_add_executor_job(storage.enroll,"c"*64,"Existing","modbus_protocol_4")
+    client=await hass_ws_client(hass)
+    await client.send_json_auto_id({"type":DOMAIN+"/set_collection","device_id":identifier,"enabled":False,"poll_interval":1})
+    assert (await client.receive_json())["success"]
+    before=await hass.async_add_executor_job(storage.device,identifier)
+    assert before["poll_interval"]==1
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1",0));port=sock.getsockname()[1]
+    request={"type":DOMAIN+"/set_connection","device_id":identifier,"request_id":"c6b20558-1336-4b24-a146-08f3ef328f89",
+             "method":"callback","collector_ip":"127.0.0.1","callback_host":"127.0.0.1","callback_port":port}
+    reader=await hass_ws_client(hass,access_token=hass_read_only_access_token)
+    await reader.send_json_auto_id(request)
+    assert not (await reader.receive_json())["success"]
+    await client.send_json_auto_id({**request,"callback_host":"192.168.50.99"})
+    assert not (await client.receive_json())["success"]
+    assert "collector_connections" not in entry.options
+    await client.send_json_auto_id(request)
+    result=await client.receive_json()
+    assert result["success"] and result["result"]["state"]=="saved_paused"
+    saved=entry.options["collector_connections"][identifier]
+    assert saved["method"]=="callback"
+    await client.send_json_auto_id(request)
+    assert (await client.receive_json())["success"]
+    assert await hass.async_add_executor_job(storage.device,identifier)==before
+    for invalid in (0,301,True):
+        await client.send_json_auto_id({"type":DOMAIN+"/set_collection","device_id":identifier,"enabled":False,"poll_interval":invalid})
+        assert not (await client.receive_json())["success"]
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data["service"].callback.saved[identifier]==saved
+    assert entry.runtime_data["service"].callback.identities["c"*64]==identifier
+    assert await hass.async_add_executor_job(entry.runtime_data["storage"].device,identifier)==before
+    sender.assert_not_awaited()
+
+
 async def test_native_controls_share_executor_and_never_set_optimistic_values(hass, entry, hass_admin_user, monkeypatch):
     from unittest.mock import ANY
     from homeassistant.helpers import entity_registry as er

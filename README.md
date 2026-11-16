@@ -1,8 +1,8 @@
 # Solar Inverter Cloud Bridge
 
 A Home Assistant integration for monitoring and configuring solar inverters through
-their Wi-Fi collectors. Redirect the collector's cloud connection to Home Assistant,
-and the integration handles communication with the inverter on your local network.
+their Wi-Fi collectors. Request a local callback or redirect the collector's cloud
+connection to Home Assistant. The integration handles inverter communication locally.
 
 - Native sensors for solar generation, battery, grid, load and energy, where available.
 - Native controls for supported inverter settings, with independent readback.
@@ -10,7 +10,8 @@ and the integration handles communication with the inverter on your local networ
 - Read-based protocol recognition and compatibility reports for unlisted devices.
 
 Runs inside Home Assistant Core without a separate app, MQTT broker or vendor-cloud
-account. Current version: **0.8.2 — pre-release**. Available as a HACS custom repository;
+account. Current source candidate: **0.9.0**. Check release notes for the capabilities
+of a tagged release. Available as a HACS custom repository;
 default-catalog inclusion requires approval by the HACS maintainers.
 
 ## Inverter models
@@ -51,7 +52,8 @@ Unlisted models can be checked against the available profiles from the setup wiz
 ## Supported protocols
 
 Collector connections use **EyeBond AT or binary framing** over TCP **502, 18899
-and 38899**. Inside that connection, the integration supports these inverter protocols:
+and 38899**, or a local callback listener (default **8899**). Inside that connection,
+the integration supports these inverter protocols:
 
 | Protocol family | Implemented variants |
 | --- | --- |
@@ -71,10 +73,12 @@ by profile and firmware; some profiles provide monitoring only. See the
 
 ### Known limitations
 
-Intermittent polling timeouts have been observed on the reference AT installation.
-Readings can recover, but the cause and long-term reliability are still under
-investigation. Additional profiles are experimental and require device-specific
-verification. This pre-release does not claim fault-free continuous operation.
+Intermittent polling timeouts and occasional incomplete callback frames have been
+observed on the reference installation. Readings can recover, but the cause and
+long-term reliability are still under investigation. Additional profiles are
+experimental and require device-specific verification. This pre-release does not
+claim fault-free continuous operation. A callback does not coordinate another Home
+Assistant instance or a vendor cloud; keep one active controller.
 
 ## Install through HACS
 
@@ -87,6 +91,32 @@ See [installation and collector setup](docs/INSTALL.md) before connecting a devi
 The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
 
 ## Redirect the collector to Home Assistant
+
+### Local callback
+
+In **Add inverter → Connect**, select **Automatic** or **Local connection (UDP
+callback)** and enter the Wi-Fi collector's IP. Automatic with no IP waits for a
+redirected connection. Callback sends one targeted UDP request to port 58899 asking
+the collector to connect to HA over TCP 8899; readings and supported writes then
+use that TCP connection. The full collector identity and inverter profile must
+still pass their checks before enrollment.
+
+For an already added inverter, open **Connection → Connection method**, choose the
+method and addresses, and select **Save connection**. The enrollment, entities and
+history are retained. **Pause between polls, seconds** sets a 1–300-second delay
+after each completed cycle; it is not a fixed update interval.
+
+The callback HA address must belong to a local HA interface; private IPv4 networks
+with preserved collector source addresses are supported. UDP must reach the collector
+and its TCP callback must reach HA. The advanced fields allow nonstandard ports.
+Firmware support varies, and a callback can affect the collector's cloud session.
+On the reference Wi-Fi.DTU collector (firmware 8.50.12.3, AT 1.11), callback readings
+and reversible display-setting writes have been verified without a DNS override to
+the callback receiver. Keep only one active controller: a passive redirected TCP
+connection alongside active callback worked, but simultaneous command workflows on
+both connections did not. See the [test scope and timings](docs/verification/README.md).
+
+### DNS or TCP redirection
 
 The collector initiates the connection. Configure your router or local DNS resolver
 so its traffic reaches the integration:

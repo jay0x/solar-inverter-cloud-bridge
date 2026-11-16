@@ -10,7 +10,7 @@ from .const import DOMAIN
 from .core.identity import peer_allowed
 from .core.observations import TELEMETRY_TTL_SECONDS
 from .core.parameters import FIELDS, inventory
-from .core.policy import MAX_CLOCK_CORRECTION_SECONDS
+from .core.policy import MIN_CLOCK_CORRECTION_SECONDS
 from .core.artifact import artifact_metadata
 
 
@@ -89,7 +89,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
                      "listeners": service.listeners, "degraded": state["degraded"],
                     "active_tasks": sum(not task.done() for task in service.tasks), "queued_commands": sum(service._queued.values()),
                     "allowed_source_rules": len(service.sources), "rejected_connections": service.rejected, "admission_counters": dict(service.reject_reasons)},
-        "policy": {"telemetry_ttl_seconds": TELEMETRY_TTL_SECONDS, "maximum_clock_correction_seconds": MAX_CLOCK_CORRECTION_SECONDS},
+        "policy": {"telemetry_ttl_seconds": TELEMETRY_TTL_SECONDS, "minimum_clock_correction_seconds": MIN_CLOCK_CORRECTION_SECONDS},
         "storage": await hass.async_add_executor_job(storage.storage_summary),
         "parameter_inventory": list(inventory()), "devices": devices, "recent_issues": issues,
         "compatibility": compatibility,

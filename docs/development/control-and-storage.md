@@ -75,6 +75,22 @@ fallback is performed. Accepted-profile digests include the setting/telemetry gr
 
 The database is `solar_inverter_bridge/bridge.sqlite3` under the HA configuration
 directory. A single worker owns its connection, with WAL and `synchronous=FULL`.
+
+Config-entry options also store per-device connection preferences in
+`collector_connections`. They contain private collector/callback addresses, not
+write permissions. Callback reconnects are pinned to the ledger's collector identity.
+Network bootstrap never replays an inverter setting command.
+The administrator-only `set_connection` WebSocket command edits an existing device
+under its command/stream ownership guards. Preferences persist through HA's
+config-entry API; no direct `.storage` write or enrollment replacement is involved.
+Connection attempt UUIDs are bounded runtime deduplication, not durable inverter
+operation IDs. Collection pause uses the existing `enabled` field; the retained
+`poll_interval` field now accepts whole seconds 1–300 and denotes a post-cycle pause.
+
+Periodic settings reads are separated from telemetry: at least 30 seconds between
+complete settings reads on the same session. Reconnect, profile renewal and writes
+invalidate reuse. The settings observation timestamp is not advanced by telemetry
+alone. Every command retains its own fresh identity/settings preflight and readback.
 Failed integrity checks refuse startup. Do not edit HA-owned `.storage` files.
 
 Current software bounds: 16 saved devices, 100,000 retained operation IDs, 16 queued/

@@ -162,11 +162,14 @@ class ATTransport(WireReader):
         self.writer.close()
 
 
+CALLBACK_HEARTBEAT_INTERVAL = 20
+
+
 class BinaryTransport:
     dialect = "binary"
     capabilities = BINARY_CAPABILITIES
 
-    def __init__(self, wire, *, timeout=5):
+    def __init__(self, wire, *, timeout=5, callback_connection=False):
         self.wire = wire
         self.wire.minimum_gap = 0
         self.wire.raw_session_identified = False
@@ -177,6 +180,9 @@ class BinaryTransport:
         self.slave = 1
         self.route = (1, 1)
         self.route_qualified = False
+        self.callback_connection = callback_connection
+        self.callback_identity_route = None
+        self._callback_management_route = None
         self.counters = Counter()
         self._tid = 0
         self._peer_tids = set()
@@ -223,10 +229,22 @@ class BinaryTransport:
                     request, future = pending
                     if frame.tid == request.tid and frame.function == request.function:
                         if (frame.code, frame.address) != (request.code, request.address):
-                            self.counters["wrong_route"] += 1
-                            self.emit("wrong_route", tid=frame.tid, function=frame.function,
-                                      expected_route=[request.code, request.address], observed_route=[frame.code, frame.address])
-                            continue
+                            # Observed local-callback firmware answers collector
+                            # management on 0x0102/255. This is a fixed mapping,
+                            # not a wildcard and never an inverter-FC4 exception.
+                            management_reply = (self.callback_connection
+                                and (frame.code, frame.address) == (0x0102, 255)
+                                and ((request.function == 1 and (request.code, request.address) == (0, 1))
+                                     or (request.function == 2 and (request.code, request.address) == (1, 1))))
+                            if management_reply:
+                                self._callback_management_route = (frame.code, frame.address)
+                                self.emit("callback_management_route", tid=frame.tid, function=frame.function,
+                                          request_route=[request.code, request.address], response_route=[frame.code, frame.address])
+                            else:
+                                self.counters["wrong_route"] += 1
+                                self.emit("wrong_route", tid=frame.tid, function=frame.function,
+                                          expected_route=[request.code, request.address], observed_route=[frame.code, frame.address])
+                                continue
                         if not future.done():
                             future.set_result(frame.payload)
                         continue
@@ -313,6 +331,9 @@ class BinaryTransport:
         identity = full_pn_identity(await self.query(2))
         if identity is None:
             raise ValueError("binary_full_identity_missing")
+        # Only a validated full-PN query promotes the management route to a
+        # native read-probe candidate. Native profile/CRC/slave checks still apply.
+        self.callback_identity_route = self._callback_management_route
         return {**identity, "identity_method": "binary_fc2_parameter_2"}
 
     async def heartbeat(self):
@@ -330,7 +351,10 @@ class BinaryTransport:
         if self.route_qualified:
             return await read_identity(self, self.writer)
         async with asyncio.timeout(15):
-            for route, slave in (((1, 1), 1), ((1, 255), 1), ((1, 255), 5), ((1, 1), 5)):
+            candidates = (((1, 1), 1), ((1, 255), 1), ((1, 255), 5), ((1, 1), 5))
+            if self.callback_identity_route is not None:
+                candidates = ((self.callback_identity_route, 1), (self.callback_identity_route, 5)) + candidates
+            for route, slave in candidates:
                 self.route, self.slave = route, slave
                 self.emit("route_probe", route=list(route), slave=slave, origin="diagnostic_probe")
                 try:

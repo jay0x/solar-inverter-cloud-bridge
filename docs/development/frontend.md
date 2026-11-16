@@ -16,6 +16,11 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 - Polling must not replace an active input/dropdown or steal focus through nested
   HA shadow roots. Drafts, caller-owned operation IDs and uncertain results survive
   reload. A lost response is not an automatic resend.
+- Save buttons use the normal outline style when values match saved settings and
+  the primary style while that section has changes. Reverting or successfully saving
+  clears the highlight. Connection, collection, clock, recovery and network settings
+  are compared independently, including during background refresh with an active input.
+  Numeric formatting and reordered/duplicate source entries do not create false changes.
 - Show the selected profile's full implemented inventory. Explain freshness and
   capability restrictions without inventing unsupported fields or control modes.
 - Profile acceptance covers its readings and implemented writable settings. A changed
@@ -24,7 +29,7 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 
 ## Profile composition
 
-Panel 0.16.1 consumes the backend `profile_layers` description. Recognition,
+Panel 0.20.0 consumes the backend `profile_layers` description. Recognition,
 enrollment review, Configuration, Connection and catalog details show the common
 map separately from a required model extension and qualification evidence. A common-only candidate
 uses **Use common map** without requiring an exact model name. Required corrections
@@ -58,6 +63,21 @@ The empty home view has one primary entry point, **Connect your first inverter**
 The four steps are **Name → Connect → Check → Add**. The existing allowed network is
 shown as already configured; adding another source is a disclosure, not a repeated
 mandatory task. Saved network rules are retained.
+
+Connect offers Automatic, local UDP callback and redirected connection. Collector
+IP is optional in Automatic and required for callback. Advanced fields specify the
+HA LAN address and ports. A connection-attempt ID is saved before sending; reload
+does not resend automatically. Inverter verification and explicit enrollment remain
+separate from callback bootstrap, and the connection choice persists after enrollment.
+
+The device's **Connection** tab reuses these fields for **Save connection**, with
+device-scoped drafts and request IDs independent of the add wizard. Saving preserves
+enrollment and registry IDs. Paused collection saves the preference without UDP.
+Show the attempt result separately from the active connection and fresh readings.
+**Pause between polls, seconds** accepts integers 1–300; retain `poll_interval` as
+the API/storage field for compatibility. **Collect readings** explains that pausing
+also blocks new setting writes and automatic callback attempts, while retaining the
+inverter's operation, entities, history and possible TCP heartbeats.
 
 When collectors are found, their cards and primary **Use this connection** buttons
 come before router instructions. Choosing a connection immediately runs the existing

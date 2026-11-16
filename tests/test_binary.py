@@ -64,6 +64,24 @@ class Writer:
 
 
 class AdapterBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_callback_management_mapping_never_relaxes_native_reply_route(self):
+        for callback, function in ((False, 2), (True, 4)):
+            reader=asyncio.StreamReader();writer=Writer()
+            adapter=BinaryTransport(ATTransport(reader,writer,lambda *a,**k:None),callback_connection=callback)
+            request=asyncio.create_task(adapter.request(function,b"\x02",(1,1)))
+            try:
+                await wait_until(lambda:adapter._pending is not None)
+                tid=adapter._pending[0].tid
+                reader.feed_data(struct.pack(">HHHBB",tid,258,4,255,function)+b"ok")
+                await asyncio.sleep(0.02)
+                self.assertFalse(request.done())
+                self.assertEqual(adapter.counters["wrong_route"],1)
+                reader.feed_data(struct.pack(">HHHBB",tid,1,4,1,function)+b"ok")
+                self.assertEqual(await request,b"ok")
+            finally:
+                request.cancel();await asyncio.gather(request,return_exceptions=True)
+                await adapter.close()
+
     async def test_at_on_binary_hint_and_fragmented_unsolicited_identity(self):
         reader = asyncio.StreamReader()
         writer = Writer()
@@ -263,14 +281,13 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.observations[device_id].values["battery_voltage"]["value"], 48)
         result=await self.service.apply(device_id, "primary_output_priority", "sbu", str(uuid.uuid4()))
         self.assertEqual(result["outcome"],"confirmed")
-        with self.assertRaisesRegex(ValueError, "transport_clock_unsupported"):
-            await self.service.apply(device_id,"inverter_datetime","2026-11-07T12:00:00",str(uuid.uuid4()),clock_sync=True)
+        self.assertTrue(self.service.transport_capabilities(self.storage.device(device_id))["clock_write"])
         with self.assertRaisesRegex(ValueError, "transport_reset_unsupported"):
             await self.service.reset_collector(device_id)
         self.assertFalse(self.service._reset_due(self.storage.device(device_id)))
         self.assertFalse(any(function not in (1, 2, 4) or (function == 4 and payload[1] not in (3,16)) for function, payload in self.seen))
         self.assertEqual(len(self.storage.recent_operations(device_id)), 1)
-        self.assertFalse(self.service.transport_capabilities(self.storage.device(device_id))["clock_write"])
+        self.assertTrue(self.service.transport_capabilities(self.storage.device(device_id))["clock_write"])
         # Existing AT and binary peers coexist behind the same NAT source.
         reader, writer = await asyncio.open_connection("127.0.0.1", self.port)
         try:

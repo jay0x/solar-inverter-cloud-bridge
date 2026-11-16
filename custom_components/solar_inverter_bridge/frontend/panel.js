@@ -85,12 +85,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._routerHints?.[key]) hints.set(key, this._routerHints[key]);
     }
     hints.set("addresses", JSON.stringify(this._routerHints?.addresses || []));
-    return "/solar_inverter_bridge/routers.html?v=0.16.1#" + hints.toString();
+    return "/solar_inverter_bridge/routers.html?v=0.20.0#" + hints.toString();
   }
 
   async _loadCollectorDomains() {
     try {
-      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.16.1");
+      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.20.0");
       if (!response.ok) throw new Error("Domain catalogue unavailable");
       this._collectorDomains = await response.json();
     } catch (_) {
@@ -126,6 +126,34 @@ class SolarInverterBridgePanel extends HTMLElement {
     // HA embeds custom panels in nested shadow roots. document.activeElement
     // points at a host, not at the select whose native popup is currently open.
     if (!this._editing()) this._render();
+    else this._updateSaveButtons();
+  }
+
+  _updateSaveButtons() {
+    if (!this._status) return;
+    const value = id => this.querySelector('#' + id)?.value;
+    const checked = id => this.querySelector('#' + id)?.checked;
+    const sources = items => JSON.stringify([...new Set(items)].sort());
+    const connection = config => {
+      const method = config.method || 'redirect';
+      const ip = method === 'redirect' ? '' : (config.collector_ip || '').trim();
+      return JSON.stringify(ip ? [method, ip, (config.callback_host || '').trim(), Number(config.callback_port ?? 8899), Number(config.udp_port ?? 58899)] : [method, '']);
+    };
+    const comparisons = {
+      'clock': device => checked('clock-sync') !== Boolean(device.clock_sync),
+      'auto-reset': device => checked('auto-reset') !== Boolean(device.auto_reset),
+      'poll-options': device => checked('poll-enabled') !== (device.enabled !== false) || Number(value('poll-interval')) !== Number(device.poll_interval ?? 10),
+      'network': () => sources((value('allowed-sources') || '').split(/[,\s]+/).filter(Boolean)) !== sources(this._status.allowed_sources || []),
+      'bootstrap-save': () => value('bootstrap-preference') !== (this._status.bootstrap_preference || 'auto'),
+      'save-connection': device => connection({method:value('connection-method'), collector_ip:value('collector-ip'), callback_host:value('callback-host'), callback_port:value('callback-port'), udp_port:value('callback-udp-port')}) !== connection(device.connection_options || {}),
+    };
+    for (const [action, changed] of Object.entries(comparisons)) {
+      this.querySelectorAll(`button[data-action="${action}"]`).forEach(button => {
+        const device = this._status.devices?.find(item => item.device_id === button.dataset.device);
+        if (button.dataset.device && !device) return;
+        button.classList.toggle('primary', changed(device));
+      });
+    }
   }
 
   _editing() {
@@ -319,7 +347,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     const body = !this._status ? '<section class="empty-state"><h2>Connecting to your bridge…</h2><p>Reading the saved devices and their latest measurements.</p></section>' : this._wizard ? this._wizardView(status) : selected ? this._deviceView(selected, status) : this._home(status);
     const firstSetup = !selected && !devices.length;
     const support = this._wizard ? "" : firstSetup ? this._disclosure("home-help", "Connection help and diagnostics", this._compatibilityView(status, false), this._reportOpen) : this._compatibilityView(status);
-    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.16.1"><div class="sib"></div>`;
+    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.20.0"><div class="sib"></div>`;
     this.querySelector(".sib").innerHTML = `<header class="appbar"><button class="icon-button" aria-label="Open Home Assistant menu" data-action="menu">${this._icon("menu")}</button>
       <img class="brand-logo" src="/solar_inverter_bridge/icon.png" srcset="/solar_inverter_bridge/icon@2x.png 2x" width="32" height="32" alt=""><span class="brand">Solar Inverter Cloud Bridge</span><span class="local-label">Local connection</span></header>
       <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || this._error ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
@@ -343,8 +371,10 @@ class SolarInverterBridgePanel extends HTMLElement {
         this._drafts[input.dataset.draft] = input.type === "checkbox" ? input.checked : input.value;
         if (input.id.startsWith("edit-")) this._updateEditorActions(input);
         this._saveDrafts();
+        this._updateSaveButtons();
       };
     });
+    this._updateSaveButtons();
     const search = this.querySelector("#parameter-search");
     if (search) search.oninput = () => {
       const position = search.selectionStart;
@@ -426,6 +456,27 @@ class SolarInverterBridgePanel extends HTMLElement {
         <p>Changes take effect on a new connection. Reconnect the collector's Wi-Fi or restart its Wi-Fi module through its app if supported. Cached DNS may take time to expire.</p>${this._discoveryView(status)}`)}`;
   }
 
+  _connectionMethodForm(status, device = null) {
+    const scope = device ? device.device_id + ":connection" : "setup";
+    const saved = device?.connection_options || {};
+    const method = this._draft(scope, "method", saved.method || (device ? "redirect" : "auto"));
+    const request = (status.connection_requests || []).find(r => r.request_id === this._drafts[scope + ":connection_request"]);
+    const labels = {waiting:"Callback requested. Waiting for the collector's TCP connection…", connected:device ? "Collector connection identified. Fresh inverter reads are checked separately." : "Collector identified. Select its connection above to check inverter readings.", disconnected:"The collector disconnected. Retry the connection when it is ready.", timed_out:"The connection attempt expired. Check the addresses and retry.", failed:"The callback could not be confirmed. Check the connection details.", waiting_for_connection:"Waiting for a redirected collector connection.", saved_paused:"Connection preference saved. Enable Collect readings to start polling and automatic callback requests."};
+    return `<div class="subsection"><h3>Connection method</h3>
+      <label class="field-label" for="connection-method">How to connect</label><select id="connection-method" data-draft="${scope}:method">
+      ${[["auto","Automatic"],["callback","Local connection (UDP callback)"],["redirect","Redirected cloud connection"]].map(([id,name])=>`<option value="${id}" ${method===id ? "selected" : ""}>${name}</option>`).join("")}</select>
+      <label class="field-label" for="collector-ip">Wi-Fi collector IP address (optional in Automatic)</label>
+      <input id="collector-ip" data-draft="${scope}:collector_ip" value="${this._escape(this._draft(scope,"collector_ip",saved.collector_ip || ""))}" placeholder="For example, 192.168.1.50" autocomplete="off">
+      <p class="field-help">Automatic keeps a usable connection; with an IP it requests callback when disconnected. Without an IP it waits for a redirected connection. Local callback requires a reachable collector IP. Readings and supported controls both travel over TCP.</p>
+      <p class="field-help">Some commands depend on the negotiated session. Readings, supported inverter settings, and clock sync work on AT and Binary EyeBond. Restart Wi-Fi module works only on an AT session, normally a redirected connection. The confirmed local callback uses Binary EyeBond, so that restart is unavailable there.</p>
+      ${this._disclosure(scope+":callback-advanced","Callback network settings",`<label class="field-label" for="callback-host">Home Assistant LAN IP for the callback</label><input id="callback-host" data-draft="${scope}:callback_host" value="${this._escape(this._draft(scope,"callback_host",saved.callback_host || this._routerHints?.ha_ip || ""))}">
+        <label class="field-label" for="callback-port">Home Assistant TCP port</label><input id="callback-port" type="number" min="1024" max="65535" data-draft="${scope}:callback_port" value="${this._escape(this._draft(scope,"callback_port",saved.callback_port || 8899))}">
+        <label class="field-label" for="callback-udp-port">Collector UDP port</label><input id="callback-udp-port" type="number" min="1" max="65535" data-draft="${scope}:udp_port" value="${this._escape(this._draft(scope,"udp_port",saved.udp_port || 58899))}">`)}
+      <p class="field-help">${device ? "Saving waits for the current exchange, then selects the requested connection for this same collector. Entities and history are preserved. Redirected mode requires DNS/router routing to this HA; saving does not change the router. While collection is paused, the preference is saved without sending a callback." : "Connect sends a targeted callback request when needed."} Depending on firmware, callback can affect the collector's cloud connection. It does not change electrical settings.</p>
+      <button data-action="${device ? "save-connection" : "connect-collector"}" ${device ? `data-device="${this._escape(device.device_id)}"` : ""} ${device && (device.unresolved || this._pending[device.device_id]) ? "disabled" : ""}>${request && ["timed_out","failed","disconnected"].includes(request.state) ? "Retry connection" : device ? "Save connection" : "Connect collector"}</button>
+      ${request ? `<p role="status">${this._escape(labels[request.state] || request.state)}${request.reason ? " " + this._escape(request.reason) : ""}</p>` : ""}</div>`;
+  }
+
   _wizardView(status) {
     const pending = status.pending || [];
     const collector = this._draft("setup", "collector", "");
@@ -444,7 +495,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     else if (step === 1) content = `<h2>${pending.length ? "Choose your collector" : "Connect your Wi-Fi collector"}</h2><p>${pending.length ? "Connection found. Select the collector for this inverter; we will check its readings next." : "The collector sends inverter readings to Home Assistant. Configure its local connection, then select it here."}</p>
       ${!sources.length ? '<div class="banner attention">No source addresses are allowed. Go to the previous step and enter the collector network.</div>' : ""}
       <div class="collector-list" aria-live="polite">${pending.length ? pending.map(candidate => `<div class="candidate found"><div><strong>${this._icon("check")} Collector connected</strong><p>Source ${this._escape(candidate.source)}<br>Collector ${this._escape(candidate.identity_ref)}</p><small>${this._escape(candidate.transport || "AT")} · TCP ${this._escape(candidate.listener_port || "—")}</small></div><button class="primary" data-action="choose-collector" data-value="${this._escape(candidate.identity_sha256)}">Use this connection ${this._icon("arrow")}</button></div>`).join("") : '<div class="waiting-state"><span class="status-dot"></span><div><strong>Waiting for a collector…</strong><p>This list updates automatically. Already added inverters are not listed again.</p></div></div>'}</div>
-      ${pending.length ? this._disclosure("setup-another", "Connect another collector", this._connectionHelp(status), Boolean(this._disclosures["setup-dns-details"])) : this._connectionHelp(status)}`;
+      ${pending.length ? this._disclosure("setup-another", "Connect another collector", this._connectionMethodForm(status)+this._connectionHelp(status), Boolean(this._disclosures["setup-dns-details"])) : this._connectionMethodForm(status)+this._connectionHelp(status)}`;
     else if (step === 2) content = `<h2>${this._checkingCollector ? "Checking your inverter…" : activeSearch ? "Finding a compatible profile…" : searches.length ? "Review compatibility" : "Check the connection"}</h2>
       <p>We read the inverter to identify its protocol and check its measurements. No inverter settings are changed.</p>
       ${searches.length && !this._checkingCollector ? this._profileSuggestions({...status, pending: [], profile_searches: searches}, true) : selected ? `<div class="verification-count" role="status"><strong>${selected.snapshots || 0}<span> / 2</span></strong><p>Complete readings${this._checkingCollector ? " · Please wait" : ""}</p></div>${this._checkingCollector ? "" : `<button class="primary" data-action="verify" data-value="${this._escape(selected.identity_sha256)}">Check connection ${this._icon("arrow")}</button>`}` : '<div class="banner attention">The selected collector is no longer connected. Select it again when it returns.</div><button class="primary" data-action="setup-connections">Choose a connection</button>'}
@@ -520,9 +571,9 @@ class SolarInverterBridgePanel extends HTMLElement {
     return `${device.capability_reason ? `<div class="banner attention">${this._escape(device.capability_reason)}</div>` : ""}
       ${device.profile_layers ? `<section class="surface">${this._profileLayers(device.profile_layers)}</section>` : ""}
       ${device.profile_acceptance ? `<section class="surface"><h3>Accepted experimental profile</h3><p>Compatibility is inferred. The accepted profile enables its implemented writable settings. Readback confirms reported values, not a physical effect.</p>${device.profile_layers?.variants?.length ? `<label class="field-label" for="profile-variant">Protocol write dialect</label><select id="profile-variant" data-draft="${device.device_id}:profile_variant">${device.profile_layers.variants.map(v=>`<option value="${this._escape(v.id)}" ${this._draft(device.device_id,"profile_variant",device.profile_layers.selected_variant)===v.id ? "selected" : ""}>${this._escape(v.name)}</option>`).join("")}</select><p class="field-help">Select the dialect documented for your inverter, then recheck and review the proposal. Writes are never retried with a different command case.</p>` : ""}<button data-action="profile-recheck" data-device="${device.device_id}">Recheck this profile</button></section>` : ""}
-      <section class="clock-panel"><div class="icon-tile">${this._icon("clock")}</div><div class="grow"><h3>Automatic clock sync</h3><p>${device.capabilities?.clock_write === false ? "Paused: clock writes are unavailable on this transport. The preference is retained." : "Corrects small differences, up to five minutes, using Home Assistant local time."}</p><small>Inverter time: ${this._escape(settings.inverter_datetime?.replace("T", " ") || "Not observed")}</small></div>
+      <section class="clock-panel"><div class="icon-tile">${this._icon("clock")}</div><div class="grow"><h3>Automatic clock sync</h3><p>${device.capabilities?.clock_write === false ? "Paused: clock writes are unavailable on this transport. The preference is retained." : "Corrects any difference of one minute or more, including differences of several hours, using Home Assistant local time. Smaller differences can come from read delay and are left unchanged."}</p><small>Inverter time: ${this._escape(settings.inverter_datetime?.replace("T", " ") || "Not observed")}</small></div>
       <label class="switch-label"><input id="clock-sync" data-draft="${device.device_id}:clock" type="checkbox" ${this._draft(device.device_id, "clock", device.clock_sync) ? "checked" : ""}> Enabled</label><button data-action="clock" data-device="${device.device_id}">Save clock setting</button></section>
-      <section class="clock-panel"><div class="icon-tile">${this._icon("refresh")}</div><div class="grow"><h3>Automatic Wi-Fi recovery</h3><p>Restart the Wi-Fi module after no complete inverter readings for at least 5 minutes and three polling intervals. At most once per hour, including after Home Assistant restarts.</p><small>${device.capabilities?.module_reset === false ? "Paused: module reset is unavailable on this transport. " : ""}Paused when collection is disabled. Requires a connected module; cannot repair missing DNS or a disconnected collector.</small></div>
+      <section class="clock-panel"><div class="icon-tile">${this._icon("refresh")}</div><div class="grow"><h3>Automatic Wi-Fi recovery</h3><p>Restart the Wi-Fi module after no complete inverter readings for at least 5 minutes and three polling intervals. At most once per hour, including after Home Assistant restarts.</p><small>${device.transport === "binary" ? "Unavailable on this Binary EyeBond session. Switch to a redirected AT connection to restart the Wi-Fi module. Inverter settings and clock sync remain available. " : device.transport === "at" ? "Available on this AT connection. It becomes unavailable if this inverter uses a Binary EyeBond callback. " : ""}Paused when collection is disabled. Requires a connected module; cannot repair missing DNS or a disconnected collector.</small></div>
       <label class="switch-label"><input id="auto-reset" data-draft="${device.device_id}:auto_reset" type="checkbox" ${this._draft(device.device_id, "auto_reset", device.auto_reset || false) ? "checked" : ""}> Enabled</label><button data-action="auto-reset" data-device="${device.device_id}">Save recovery setting</button></section>
       ${this._operationView(device.device_id)}
       <div class="settings-toolbar"><div><h2>Inverter configuration</h2><p>Click a value to edit. Apply appears only when it changes.</p></div><label class="search-box">${this._icon("search")}<input id="parameter-search" value="${this._escape(this._search)}" placeholder="Find a setting" aria-label="Find a setting"></label></div>
@@ -625,10 +676,15 @@ class SolarInverterBridgePanel extends HTMLElement {
 
   _connectionView(device, status) {
     return `<div class="two-column"><section class="surface"><div class="section-heading"><h2>Collector connection</h2>${this._statusChip(device)}</div>
-      <div class="detail-row"><span>Transport</span><strong>${device.transport === "binary" ? "Binary EyeBond (experimental)" : "AT / raw RTU"}</strong></div><div class="detail-row"><span>Listener ports</span><strong>502 · 18899 · 38899</strong></div>
+      <div class="detail-row"><span>Transport</span><strong>${device.transport === "binary" ? "Binary EyeBond" : "AT / raw RTU"}</strong></div><div class="detail-row"><span>Listener ports</span><strong>${(status.listeners || [{port:502},{port:18899},{port:38899}]).filter(p=>p.bound!==false).map(p=>this._escape(p.port)).join(" · ")}</strong></div>
+      <div class="detail-row"><span>Connection preference</span><strong>${this._escape({auto:"Automatic",callback:"Local callback",redirect:"Redirected connection"}[device.connection_options?.method || "redirect"])}</strong></div>
+      <div class="detail-row"><span>Active TCP port</span><strong>${this._escape(device.listener_port || "Not connected")}</strong></div>
+      ${device.connection_options?.collector_ip ? `<div class="detail-row"><span>Collector IP</span><strong>${this._escape(device.connection_options.collector_ip)}</strong></div>` : ""}
+      ${device.connection_error ? `<p class="banner attention">${this._escape(device.connection_error)}. Check the collector identity before reconnecting.</p>` : ""}
       ${device.route ? `<div class="detail-row"><span>Outer route / inner slave</span><strong>${this._escape(device.route.outer.join("/"))} / ${this._escape(device.route.inner_slave)}</strong></div>` : ""}
       <div class="detail-row"><span>Protocol profile</span><strong>${this._escape(device.profile_layers?.base_map?.name || device.profile_id?.replaceAll("_", " ") || "Not identified")}</strong></div>
       <div class="detail-row no-line"><span>Last complete reading</span><strong>${this._age(device)}</strong></div>
+      ${this._connectionMethodForm(status, device)}
       <div class="subsection"><h3>Wi-Fi module</h3>
       ${(device.transport === "binary" ? [["firmware_version", "Firmware"], ["hardware_version", "Hardware"]] : [["firmware_version", "Firmware"], ["at_version", "AT version"], ["module_type", "Module type"], ["wifi_status", "Wi-Fi status"], ["cloud_assignment", "Cloud assignment"]]).map(([key, label], index, list) => `<div class="detail-row${index === list.length - 1 ? " no-line" : ""}"><span>${label}</span><strong>${this._escape(device.module?.[key] || "Not read")}</strong></div>`).join("")}
       <p class="field-help">These are read from the collector. Cloud assignment is never written back.</p>
@@ -636,10 +692,11 @@ class SolarInverterBridgePanel extends HTMLElement {
       <button data-action="module-info" data-device="${device.device_id}">Read module details</button></div></section>
       <section class="surface"><h2>Data collection</h2><p>These settings affect the bridge's polling, not the inverter's electrical operation.</p>
       <label class="switch-label"><input id="poll-enabled" type="checkbox" data-draft="${device.device_id}:enabled" ${this._draft(device.device_id, "enabled", device.enabled !== false) ? "checked" : ""}> Collect readings</label>
-      <label class="field-label" for="poll-interval">Poll interval, seconds</label><input id="poll-interval" type="number" min="5" max="300" data-draft="${device.device_id}:poll_interval" value="${this._escape(this._draft(device.device_id, "poll_interval", device.poll_interval || 10))}">
-      <p class="field-help">5–300 seconds. Readings become stale after 60 seconds without an update.</p><button class="primary" data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
+       <p class="field-help">When unchecked, regular polling and new setting writes are paused. An exchange already in progress may finish. The inverter keeps operating; entities and history are retained. Existing TCP connections may keep heartbeats, but automatic callback requests stop.</p>
+       <label class="field-label" for="poll-interval">Pause between polls, seconds</label><input id="poll-interval" type="number" min="1" max="300" step="1" data-draft="${device.device_id}:poll_interval" value="${this._escape(this._draft(device.device_id, "poll_interval", device.poll_interval || 10))}">
+       <p class="field-help">1–300 seconds after each completed telemetry cycle, not a fixed update interval. A 10-second cycle with a 1-second pause starts the next cycle about 11 seconds later. Polls never overlap. Complete settings are refreshed at least ${this._escape(device.settings_refresh_interval || Math.max(30,device.poll_interval || 10))} seconds apart and after reconnects or writes. Every command still reads its baseline independently. Readings become stale after 60 seconds without an update.</p><button data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
       <div class="subsection"><h3>Wi-Fi module</h3><p>Restarts only the collector module. Inverter settings stay unchanged, and readings pause until it reconnects.</p>
-      <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button>${device.capabilities?.module_reset === false ? '<p class="field-help">Reset is not qualified for this transport.</p>' : ""}</div>
+      <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button>${device.capabilities?.module_reset === false ? '<p class="field-help">Unavailable on Binary EyeBond. This command is available only on an AT session, normally a redirected connection.</p>' : '<p class="field-help">Available on this AT session. A Binary EyeBond callback does not support restarting the Wi-Fi module.</p>'}</div>
       <div class="subsection"><h3>Allowed network sources</h3><p>Only new collector connections from these addresses are admitted. Use the router IP when the router translates source addresses.</p>
       <label class="field-label" for="allowed-sources">IP addresses or CIDR networks</label><input id="allowed-sources" data-draft="network:sources" value="${this._escape(this._draft("network", "sources", (status.allowed_sources || []).join(", ")))}" placeholder="192.168.10.1">
       <p class="field-help">Separate addresses with commas. An empty list rejects new connections. This setting is shared by all inverters.</p><button data-action="network">Save allowed sources</button></div></section></div>
@@ -877,6 +934,28 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "tab") return this._navigate(`sib/device/${device}/${value}`);
     if (action === "setup-back") return this._navigate(`sib/add/${Math.max(0, this._wizardStep - 1)}`);
     if (action === "setup-connections") { this._error=""; return this._navigate("sib/add/1"); }
+    if (action === "connect-collector" || action === "save-connection") {
+      const scope = action === "save-connection" ? device + ":connection" : "setup";
+      const config = {method:this.querySelector('#connection-method').value,
+        collector_ip:this.querySelector('#collector-ip').value.trim(),
+        callback_host:this.querySelector('#callback-host').value.trim(),
+        callback_port:Number(this.querySelector('#callback-port').value),
+        udp_port:Number(this.querySelector('#callback-udp-port').value)};
+      if (config.method === 'callback' && !config.collector_ip) { this._error='Enter the Wi-Fi collector IP address.';return this._render(); }
+      if (config.method === 'redirect') config.collector_ip='';
+      if (config.collector_ip && !config.callback_host) { this._error='Enter a Home Assistant LAN IP in Callback network settings.';return this._render(); }
+      const signature=JSON.stringify(config);
+      const previous=(this._status.connection_requests || []).find(r=>r.request_id===this._drafts[scope+':connection_request']);
+      if (this._drafts[scope+':connection_signature']!==signature || !this._drafts[scope+':connection_request'] || (previous && ['failed','timed_out','disconnected','superseded'].includes(previous.state))) {
+        this._drafts[scope+':connection_request']=crypto.randomUUID();
+        this._drafts[scope+':connection_signature']=signature;
+      }
+      if (!this._saveDrafts()) return;
+      return this._call({type:'solar_inverter_bridge/'+(action === 'save-connection' ? 'set_connection' : 'connect_collector'),...(action === 'save-connection' ? {device_id:device} : {}),request_id:this._drafts[scope+':connection_request'],...config},result=>{
+        this._status.connection_requests=[...(this._status.connection_requests || []).filter(r=>r.request_id!==result.request_id),result];
+        if (action === 'save-connection') for (const key of ['method','collector_ip','callback_host','callback_port','udp_port']) this._clearDraft(scope,key);
+      });
+    }
     if (action === "choose-collector") {
       this._drafts["setup:collector"] = value;
       this._saveDrafts();
@@ -898,8 +977,10 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "verify") { this._navigate("sib/add/2"); return this._verifyCollector(value); }
     if (action === "enroll") {
       const name = this._draft("setup", "name", "Inverter");
-      return this._call({type: "solar_inverter_bridge/enroll", collector_sha256: value, name}, result => {
-        for (const key of ["name", "source", "collector"]) this._clearDraft("setup", key);
+      const request=(this._status.connection_requests || []).find(r=>r.request_id===this._drafts['setup:connection_request']);
+      const connection = request && (!request.collector_ip || request.collector_sha256===value) ? {connection_request_id:request.request_id} : {};
+      return this._call({type: "solar_inverter_bridge/enroll", collector_sha256: value, name,...connection}, result => {
+        for (const key of ["name", "source", "collector", "method", "collector_ip", "callback_host", "callback_port", "udp_port", "connection_request", "connection_signature"]) this._clearDraft("setup", key);
         this._navigate(`sib/device/${result.device_id}/overview`);
       });
     }
@@ -935,6 +1016,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       return this._call({type: "solar_inverter_bridge/configure_network", allowed_sources: sources}, () => this._clearDraft("network", "sources"));
     }
     if (action === "poll-options") {
+      if (!this.querySelector("#poll-interval").reportValidity()) return;
       return this._call({type: "solar_inverter_bridge/set_collection", device_id: device, enabled: this.querySelector("#poll-enabled").checked, poll_interval: Number(this.querySelector("#poll-interval").value)}, () => {
         this._clearDraft(device, "enabled"); this._clearDraft(device, "poll_interval");
       });
@@ -942,7 +1024,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "journal") return this._downloadJournal();
     if (action === "download") {
       return this._call({type: "solar_inverter_bridge/diagnostics"}, diagnostic => {
-        diagnostic.frontend = {version: "0.16.1", view: this._tab};
+        diagnostic.frontend = {version: "0.20.0", view: this._tab};
         const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostic, null, 2)], {type: "application/json"}));
         const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-diagnostics.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);

@@ -14,7 +14,7 @@ def clock_write_allowed(enabled: bool) -> bool:
     return bool(enabled)
 
 
-MAX_CLOCK_CORRECTION_SECONDS = 300
+MIN_CLOCK_CORRECTION_SECONDS = 60
 
 
 def clock_drift_seconds(observed: str, target: str) -> float:

@@ -58,7 +58,7 @@ class SolarInverterBridgeOptionsFlow(config_entries.OptionsFlow):
             except ValueError:
                 errors["allowed_sources"] = "invalid_allowed_sources"
             else:
-                return self.async_create_entry(title="", data={"allowed_sources": sources,
+                return self.async_create_entry(title="", data={**self.config_entry.options, "allowed_sources": sources,
                     "bootstrap_preference": user_input.get("bootstrap_preference", "auto")})
         default = ", ".join(self.config_entry.options.get("allowed_sources", []))
         return self.async_show_form(step_id="init", data_schema=vol.Schema({

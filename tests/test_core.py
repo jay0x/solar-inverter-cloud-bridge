@@ -19,6 +19,14 @@ from custom_components.solar_inverter_bridge.core.storage import Storage
 from custom_components.solar_inverter_bridge.core.telemetry import decode, required_addresses
 
 
+async def wait_for_candidates(service, count=1):
+    # Port0 is an active test listener even if the OS happens to allocate38899.
+    service.auxiliary_ports.clear()
+    async with asyncio.timeout(3):
+        while len(service.candidates) < count:
+            await asyncio.sleep(0.01)
+
+
 def snapshot():
     registers = {address: 0 for address in required_addresses()}
     registers.update({201: 2, 277: 480, 280: 80, 338: 2300, 346: 2300, 302: 1200})
@@ -188,7 +196,7 @@ class StorageTests(unittest.TestCase):
                 service = CollectorService(["127.0.0.1"], storage)
                 port = (await service.start())[0][1]
                 task = asyncio.create_task(client(port))
-                await asyncio.sleep(0.7)
+                await wait_for_candidates(service)
                 sha = next(iter(service.candidates))
                 result = await service.verify(sha)
                 self.assertEqual(result["snapshots"], 2)
@@ -218,9 +226,7 @@ class StorageTests(unittest.TestCase):
                 port = (await service.start())[0][1]
                 tasks = [asyncio.create_task(client(port, name)) for name in ("ONE", "TWO")]
                 try:
-                    async with asyncio.timeout(3):
-                        while len(service.candidates) != 2:
-                            await asyncio.sleep(0.01)
+                    await wait_for_candidates(service, 2)
                     for sha in list(service.candidates):
                         holder = service.candidates[sha]
                         holder["ready"] = True
@@ -249,7 +255,7 @@ class StorageTests(unittest.TestCase):
                 service = CollectorService(["127.0.0.1"], storage, now=lambda: datetime(2026, 11, 1, 12, 0, 0))
                 port = (await service.start())[0][1]
                 task = asyncio.create_task(modbus_client(port, registers, writes, "POLL"))
-                await asyncio.sleep(0.7)
+                await wait_for_candidates(service)
                 sha = next(iter(service.candidates))
                 holder = service.candidates[sha]
                 holder.update(ready=True, verified_at=monotonic(), proof={"profile_id": "modbus_protocol_4"})
@@ -278,7 +284,7 @@ class StorageTests(unittest.TestCase):
                 service = CollectorService(["127.0.0.1"], storage, now=lambda: datetime(2026, 11, 1, 12, 0, 0))
                 port = (await service.start())[0][1]
                 task = asyncio.create_task(modbus_client(port, registers, writes, "WRITE"))
-                await asyncio.sleep(0.7)
+                await wait_for_candidates(service)
                 sha = next(iter(service.candidates))
                 service.candidates[sha].update(ready=True, verified_at=monotonic(), proof={"profile_id": "modbus_protocol_4"})
                 device_id = await service.enroll(sha, "House")
@@ -295,7 +301,7 @@ class StorageTests(unittest.TestCase):
                 storage.close()
         asyncio.run(run())
 
-    def test_large_clock_correction_is_refused_and_readback_sends_nothing(self):
+    def test_large_clock_correction_is_sent_and_unrelated_readback_sends_nothing(self):
         registers = snapshot()
         registers.update({171: 32771, 184: 4, 601: 2, 696: 2020, 697: 1, 698: 1, 699: 0, 700: 0, 701: 0})
         writes = []
@@ -306,7 +312,7 @@ class StorageTests(unittest.TestCase):
                 service = CollectorService(["127.0.0.1"], storage, now=lambda: datetime(2026, 11, 2, 12, 0, 0))
                 port = (await service.start())[0][1]
                 task = asyncio.create_task(modbus_client(port, registers, writes, "SAFE"))
-                await asyncio.sleep(0.7)
+                await wait_for_candidates(service)
                 sha = next(iter(service.candidates))
                 service.candidates[sha].update(ready=True, verified_at=monotonic(), proof={"profile_id": "modbus_protocol_4"})
                 device_id = await service.enroll(sha, "House")
@@ -314,13 +320,13 @@ class StorageTests(unittest.TestCase):
                 storage.set_mode(device_id, "control")
                 storage.set_clock_sync(device_id, True)
                 await service.poll_once(device_id)
-                self.assertEqual(writes, [])
-                self.assertEqual(service.last_error, "clock_correction_too_large")
+                self.assertEqual(writes, [(696, (2026, 11, 2, 12, 0, 0))])
+                self.assertNotEqual(service.last_error, "clock_correction_too_large")
                 storage.accept_operation(device_id, "op-readback", {"key": "primary_output_priority", "value": "sbu", "clock_sync": False})
                 self.assertTrue(storage.claim_send("op-readback"))
                 confirmed = await service.reconcile(device_id)
                 self.assertEqual(confirmed, ["op-readback"])
-                self.assertEqual(writes, [])
+                self.assertEqual(writes, [(696, (2026, 11, 2, 12, 0, 0))])
                 self.assertFalse(storage.has_unresolved(device_id))
                 service._note_failure(device_id)
                 self.assertGreaterEqual(service._next_poll[device_id] - monotonic(), 2)
