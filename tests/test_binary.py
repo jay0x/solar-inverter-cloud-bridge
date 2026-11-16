@@ -1,6 +1,7 @@
 """Synthetic reverse-TCP collectors, independently constructed envelope fixtures."""
 
 import asyncio
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 import struct
@@ -277,6 +278,9 @@ class BinarySessionTests(unittest.IsolatedAsyncioTestCase):
         self.storage.set_mode(device_id, "advanced")
         self.storage.set_clock_sync(device_id, True)
         self.storage.set_auto_reset(device_id, True)
+        # The synthetic clock is 2026-11-05. Freeze local time so a runner date
+        # cannot turn this capability check into an incidental clock write.
+        self.service.now = lambda: datetime(2026, 11, 5)
         await self.service.poll_once(device_id)
         self.assertEqual(self.service.observations[device_id].values["battery_voltage"]["value"], 48)
         result=await self.service.apply(device_id, "primary_output_priority", "sbu", str(uuid.uuid4()))
