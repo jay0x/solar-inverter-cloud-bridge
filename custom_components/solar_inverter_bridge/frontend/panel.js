@@ -85,12 +85,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._routerHints?.[key]) hints.set(key, this._routerHints[key]);
     }
     hints.set("addresses", JSON.stringify(this._routerHints?.addresses || []));
-    return "/solar_inverter_bridge/routers.html?v=0.22.0#" + hints.toString();
+    return "/solar_inverter_bridge/routers.html?v=0.24.0#" + hints.toString();
   }
 
   async _loadCollectorDomains() {
     try {
-      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.22.0");
+      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.24.0");
       if (!response.ok) throw new Error("Domain catalogue unavailable");
       this._collectorDomains = await response.json();
     } catch (_) {
@@ -146,6 +146,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       'poll-options': device => checked('poll-enabled') !== (device.enabled !== false) || Number(value('poll-interval')) !== Number(device.poll_interval ?? 10),
       'network': () => sources((value('allowed-sources') || '').split(/[,\s]+/).filter(Boolean)) !== sources(this._status.allowed_sources || []),
       'bootstrap-save': () => value('bootstrap-preference') !== (this._status.bootstrap_preference || 'auto'),
+      'incident-configure': () => checked('incident-enabled') !== (this._status.incidents?.enabled !== false),
       'save-connection': device => connection({method:value('connection-method'), collector_ip:value('collector-ip'), callback_host:value('callback-host'), callback_port:value('callback-port'), udp_port:value('callback-udp-port')}) !== connection(device.connection_options || {}),
     };
     for (const [action, changed] of Object.entries(comparisons)) {
@@ -154,6 +155,17 @@ class SolarInverterBridgePanel extends HTMLElement {
         if (button.dataset.device && !device) return;
         button.classList.toggle('primary', changed(device));
       });
+    }
+    const recording = this.querySelector('#incident-recording-status');
+    const toggle = this.querySelector('#incident-enabled');
+    if (recording && toggle) {
+      const saved = this._status.incidents?.enabled !== false;
+      const changed = toggle.checked !== saved;
+      const text = `Saved state: recording ${saved ? 'enabled' : 'disabled'}. ` + (changed
+        ? `Unsaved change: ${toggle.checked ? 'enable' : 'disable'} recording. Press Save incident recording to apply.`
+        : 'All changes saved.');
+      if (recording.textContent !== text) recording.textContent = text;
+      recording.classList.toggle('unsaved', changed);
     }
   }
 
@@ -348,7 +360,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     const body = !this._status ? '<section class="empty-state"><h2>Connecting to your bridge…</h2><p>Reading the saved devices and their latest measurements.</p></section>' : this._wizard ? this._wizardView(status) : selected ? this._deviceView(selected, status) : this._home(status);
     const firstSetup = !selected && !devices.length;
     const support = this._wizard ? "" : firstSetup ? this._disclosure("home-help", "Connection help and diagnostics", this._compatibilityView(status, false), this._reportOpen) : this._compatibilityView(status);
-    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.22.0"><div class="sib"></div>`;
+    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.24.0"><div class="sib"></div>`;
     this.querySelector(".sib").innerHTML = `<header class="appbar"><button class="icon-button" aria-label="Open Home Assistant menu" data-action="menu">${this._icon("menu")}</button>
       <img class="brand-logo" src="/solar_inverter_bridge/icon.png" srcset="/solar_inverter_bridge/icon@2x.png 2x" width="32" height="32" alt=""><span class="brand">Solar Inverter Cloud Bridge</span><span class="local-label">Local connection</span></header>
       <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || this._error ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
@@ -373,8 +385,14 @@ class SolarInverterBridgePanel extends HTMLElement {
         if (input.id.startsWith("edit-")) this._updateEditorActions(input);
         this._saveDrafts();
         this._updateSaveButtons();
+        if (input.id === 'incident-watch-device') {
+          this._render();
+          this.querySelector('#incident-watch-device')?.focus();
+        }
       };
     });
+    const incidentRaw = this.querySelector('#incident-raw');
+    if (incidentRaw) incidentRaw.oninput = () => { this._incidentRaw = incidentRaw.checked; };
     this._updateSaveButtons();
     const search = this.querySelector("#parameter-search");
     if (search) search.oninput = () => {
@@ -469,7 +487,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       <label class="field-label" for="collector-ip">Wi-Fi collector IP address (optional in Automatic)</label>
       <input id="collector-ip" data-draft="${scope}:collector_ip" value="${this._escape(this._draft(scope,"collector_ip",saved.collector_ip || ""))}" placeholder="For example, 192.168.1.50" autocomplete="off">
       <p class="field-help">Automatic keeps a usable connection; with an IP it requests callback when disconnected. Without an IP it waits for a redirected connection. Local callback requires a reachable collector IP. Readings and supported controls both travel over TCP.</p>
-      <p class="field-help">Some commands depend on the negotiated session. Readings, supported inverter settings, and clock sync work on AT and Binary EyeBond. Restart Wi-Fi module works only on an AT session, normally a redirected connection. The confirmed local callback uses Binary EyeBond, so that restart is unavailable there.</p>
+      <p class="field-help">Available commands depend on the inverter profile and negotiated session, not just this connection method. Implemented setting writes work on AT and Binary EyeBond. Clock sync is implemented for Protocol 4 on both. Binary collector reset is not implemented; the AT reset command is available on AT sessions. You can collect a compatibility report for an unsupported function.</p>
       ${this._disclosure(scope+":callback-advanced","Callback network settings",`<label class="field-label" for="callback-host">Home Assistant LAN IP for the callback</label><input id="callback-host" data-draft="${scope}:callback_host" value="${this._escape(this._draft(scope,"callback_host",saved.callback_host || this._routerHints?.ha_ip || ""))}">
         <label class="field-label" for="callback-port">Home Assistant TCP port</label><input id="callback-port" type="number" min="1024" max="65535" data-draft="${scope}:callback_port" value="${this._escape(this._draft(scope,"callback_port",saved.callback_port || 8899))}">
         <label class="field-label" for="callback-udp-port">Collector UDP port</label><input id="callback-udp-port" type="number" min="1" max="65535" data-draft="${scope}:udp_port" value="${this._escape(this._draft(scope,"udp_port",saved.udp_port || 58899))}">`)}
@@ -535,13 +553,14 @@ class SolarInverterBridgePanel extends HTMLElement {
     const tables = Object.entries(grouped).map(([group, items]) => {
       const rows = items.map(item => {
         const observed = settings[item.key] == null ? "Not observed" : this._valueLabel(settings[item.key]);
-        const editable = device.capabilities?.inverter_write !== false && device.settings_available !== false && device.enabled !== false && device.connected && settings[item.key] != null && item.execution_ready && this._reason(item) === "Editable" && !this._pending[device.device_id] && !device.unresolved;
+        const fresh = device.parameter_freshness?.[item.key]?.available ?? (device.settings_available !== false);
+        const editable = device.capabilities?.inverter_write !== false && fresh && device.enabled !== false && device.connected && settings[item.key] != null && item.execution_ready && this._reason(item) === "Editable" && !this._pending[device.device_id] && !device.unresolved;
         const desired = this._draft(device.device_id, item.key, settings[item.key] ?? "");
         const draft = `${device.device_id}:${item.key}`;
         const dirty = this._drafts[draft] != null && this._isDirty(item, desired, settings[item.key]);
         const editing = editable && (this._editingField === draft || dirty);
         const unit = settings[item.key] != null && settings[item.key] !== "full_recovery" && item.unit ? ` <span class="unit">${this._escape(item.unit)}</span>` : "";
-        const reason = device.capabilities?.inverter_write === false ? "Writes unavailable for this profile or connection" : this._pending[device.device_id] || device.unresolved ? "Waiting for the previous operation" : device.settings_available === false || !device.connected || device.enabled === false || settings[item.key] == null ? "Waiting for fresh readings" : this._reason(item);
+        const reason = device.capabilities?.inverter_write === false ? "Writes unavailable for this profile or connection" : this._pending[device.device_id] || device.unresolved ? "Waiting for the previous operation" : !fresh || !device.connected || device.enabled === false || settings[item.key] == null ? "Waiting for fresh readings from the current session" : this._reason(item);
         const limitsWarning = item.warning === "manufacturer_limits_unknown";
         const warningText = "Manufacturer limits are undocumented. Verify this value for your inverter and battery; register-format checks do not establish a supported operating range.";
         const indicator = item.access === "read_only"
@@ -565,16 +584,17 @@ class SolarInverterBridgePanel extends HTMLElement {
         } else {
           control = `<div class="value-static" title="${this._escape(reason)}"><strong>${this._escape(observed)}${unit}</strong></div>`;
         }
-        return `<div class="parameter-row ${editing ? "is-editing" : ""} ${dirty ? "has-draft" : ""}" data-parameter="${item.key}" data-device="${device.device_id}"><div><h4>${this._escape(item.name)}</h4>${device.settings_available === false ? '<small>Last known value</small>' : ""}</div><div class="parameter-value aligned-value"><span class="parameter-indicator">${indicator}</span><div class="parameter-control">${control}</div></div></div>`;
+        return `<div class="parameter-row ${editing ? "is-editing" : ""} ${dirty ? "has-draft" : ""}" data-parameter="${item.key}" data-device="${device.device_id}"><div><h4>${this._escape(item.name)}</h4>${!fresh ? '<small>Last known value</small>' : ""}</div><div class="parameter-value aligned-value"><span class="parameter-indicator">${indicator}</span><div class="parameter-control">${control}</div></div></div>`;
       }).join("");
       return `<section class="parameter-group"><div class="section-heading"><h3>${this._escape(group)}</h3><span>${items.length} settings</span></div>${rows}</section>`;
     }).join("");
     return `${device.capability_reason ? `<div class="banner attention">${this._escape(device.capability_reason)}</div>` : ""}
       ${device.profile_layers ? `<section class="surface">${this._profileLayers(device.profile_layers)}</section>` : ""}
       ${device.profile_acceptance ? `<section class="surface"><h3>Accepted experimental profile</h3><p>Compatibility is inferred. The accepted profile enables its implemented writable settings. Readback confirms reported values, not a physical effect.</p>${device.profile_layers?.variants?.length ? `<label class="field-label" for="profile-variant">Protocol write dialect</label><select id="profile-variant" data-draft="${device.device_id}:profile_variant">${device.profile_layers.variants.map(v=>`<option value="${this._escape(v.id)}" ${this._draft(device.device_id,"profile_variant",device.profile_layers.selected_variant)===v.id ? "selected" : ""}>${this._escape(v.name)}</option>`).join("")}</select><p class="field-help">Select the dialect documented for your inverter, then recheck and review the proposal. Writes are never retried with a different command case.</p>` : ""}<button data-action="profile-recheck" data-device="${device.device_id}">Recheck this profile</button></section>` : ""}
-      <section class="clock-panel"><div class="icon-tile">${this._icon("clock")}</div><div class="grow"><h3>Automatic clock sync</h3><p>${device.capabilities?.clock_write === false ? "Paused: clock writes are unavailable on this transport. The preference is retained." : "Corrects any difference of one minute or more, including differences of several hours, using Home Assistant local time. Smaller differences can come from read delay and are left unchanged."}</p><small>Inverter time: ${this._escape(settings.inverter_datetime?.replace("T", " ") || "Not observed")}</small></div>
+      <section class="surface"><h3>Function availability and feedback</h3><p>Implemented controls are available even when your model or firmware has not been hardware-tested, after profile acceptance and fresh read checks. Check the reported result on the inverter. Share the model, firmware, attempted setting, and outcome through a compatibility report to help qualify it. A function without an implemented command cannot be enabled by a permission switch.</p><button data-action="compatibility-open">Collect compatibility report</button></section>
+      <section class="clock-panel"><div class="icon-tile">${this._icon("clock")}</div><div class="grow"><h3>Automatic clock sync</h3><p>${!["modbus_protocol_4","smg_4"].includes(device.profile_id) ? "Clock writes are not implemented for this profile. Collect a compatibility report to help add support; your preference is retained." : device.capabilities?.clock_write === false ? "Waiting for a connected, qualified Protocol 4 session. Clock writes are implemented on AT and Binary EyeBond; your preference is retained." : "Corrects any difference of one minute or more, including differences of several hours, using Home Assistant local time. Smaller differences can come from read delay and are left unchanged."}</p><small>Inverter time: ${this._escape(settings.inverter_datetime?.replace("T", " ") || "Not observed")}</small></div>
       <label class="switch-label"><input id="clock-sync" data-draft="${device.device_id}:clock" type="checkbox" ${this._draft(device.device_id, "clock", device.clock_sync) ? "checked" : ""}> Enabled</label><button data-action="clock" data-device="${device.device_id}">Save clock setting</button></section>
-      <section class="clock-panel"><div class="icon-tile">${this._icon("refresh")}</div><div class="grow"><h3>Automatic Wi-Fi recovery</h3><p>Restart the Wi-Fi module after no complete inverter readings for at least 5 minutes and three polling intervals. At most once per hour, including after Home Assistant restarts.</p><small>${device.transport === "binary" ? "Unavailable on this Binary EyeBond session. Switch to a redirected AT connection to restart the Wi-Fi module. Inverter settings and clock sync remain available. " : device.transport === "at" ? "Available on this AT connection. It becomes unavailable if this inverter uses a Binary EyeBond callback. " : ""}Paused when collection is disabled. Requires a connected module; cannot repair missing DNS or a disconnected collector.</small></div>
+      <section class="clock-panel"><div class="icon-tile">${this._icon("refresh")}</div><div class="grow"><h3>Automatic Wi-Fi recovery</h3><p>Restart the Wi-Fi module after no complete inverter readings for at least 5 minutes and three polling intervals. At most once per hour, including after Home Assistant restarts.</p><small>${device.transport === "binary" ? "Binary collector reset is not implemented. Collect a compatibility report to help add support. The AT reset command cannot be sent over a binary session. " : device.transport === "at" ? "The reset command is implemented on this AT connection. " : ""}Paused when collection is disabled. Requires a connected module; cannot repair missing DNS or a disconnected collector.</small></div>
       <label class="switch-label"><input id="auto-reset" data-draft="${device.device_id}:auto_reset" type="checkbox" ${this._draft(device.device_id, "auto_reset", device.auto_reset || false) ? "checked" : ""}> Enabled</label><button data-action="auto-reset" data-device="${device.device_id}">Save recovery setting</button></section>
       ${this._operationView(device.device_id)}
       <div class="settings-toolbar"><div><h2>Inverter configuration</h2><p>Click a value to edit. Apply appears only when it changes.</p></div><label class="search-box">${this._icon("search")}<input id="parameter-search" value="${this._escape(this._search)}" placeholder="Find a setting" aria-label="Find a setting"></label></div>
@@ -697,7 +717,7 @@ class SolarInverterBridgePanel extends HTMLElement {
        <label class="field-label" for="poll-interval">Pause between polls, seconds</label><input id="poll-interval" type="number" min="1" max="300" step="1" data-draft="${device.device_id}:poll_interval" value="${this._escape(this._draft(device.device_id, "poll_interval", device.poll_interval || 10))}">
         <p class="field-help">1–300 seconds after each completed telemetry cycle, not a fixed update interval. A 10-second cycle with a 1-second pause starts the next cycle about 11 seconds later. Polls never overlap. Complete settings are refreshed at least ${this._escape(device.settings_refresh_interval || Math.max(30,device.poll_interval || 10))} seconds apart and after reconnects or writes. Every command still reads its baseline independently. Readings become stale after ${this._escape(device.telemetry_ttl_seconds || (60 + Number(device.poll_interval || 10)))} seconds without an update: 60 seconds plus the pause, so a 300-second pause remains current for 360 seconds.</p><button data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
       <div class="subsection"><h3>Wi-Fi module</h3><p>Restarts only the collector module. Inverter settings stay unchanged, and readings pause until it reconnects.</p>
-      <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button>${device.capabilities?.module_reset === false ? '<p class="field-help">Unavailable on Binary EyeBond. This command is available only on an AT session, normally a redirected connection.</p>' : '<p class="field-help">Available on this AT session. A Binary EyeBond callback does not support restarting the Wi-Fi module.</p>'}</div>
+       <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button><p class="field-help">Collector reset is implemented for AT sessions. The binary reset command is not implemented; a different connection method alone does not establish support.</p><button data-action="compatibility-open">Collect compatibility report</button></div>
       <div class="subsection"><h3>Allowed network sources</h3><p>Only new collector connections from these addresses are admitted. Use the router IP when the router translates source addresses.</p>
       <label class="field-label" for="allowed-sources">IP addresses or CIDR networks</label><input id="allowed-sources" data-draft="network:sources" value="${this._escape(this._draft("network", "sources", (status.allowed_sources || []).join(", ")))}" placeholder="192.168.10.1">
       <p class="field-help">Separate addresses with commas. An empty list rejects new connections. This setting is shared by all inverters.</p><button data-action="network">Save allowed sources</button></div></section></div>
@@ -718,7 +738,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       <div class="detail-row"><span>Listening for collectors</span><strong>${status.listening ? "Yes" : "No"}</strong></div><div class="detail-row"><span>Unresolved operations</span><strong>${device.unresolved || 0}</strong></div>
       <div class="detail-row"><span>Retry delay</span><strong>${device.poll_backoff_seconds || 0}s</strong></div><div class="detail-row"><span>Rejected connections</span><strong>${status.rejected || 0}</strong></div>
       <div class="detail-row"><span>Last recorded issue</span><strong>${issue ? this._escape(this._issueLabel(issue.code)) : "None recorded"}${issue ? `<small class="history-time">${this._escape(this._formatTime(issue.occurred_at))}${issue.stage ? " · " + this._escape(this._valueLabel(issue.stage)) : ""}</small>` : ""}</strong></div>
-      <p class="field-help">Diagnostics omit names, source addresses, credentials, and raw traffic. The journal export keeps operation IDs for maintenance and does not delete them. Repeated identical faults are recorded at most once a minute.</p></section>`;
+       <p class="field-help">Diagnostics omit names, source addresses, credentials, and raw traffic. The journal export keeps operation IDs for maintenance and does not delete them. Repeated identical faults are recorded at most once a minute.</p></section>${this._incidentsView(status, device)}`;
   }
 
   _formatTime(value) {
@@ -734,6 +754,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     return `${showSuggestions ? this._profileSuggestions(status) : ""}<section class="surface compatibility-panel"><div class="section-heading"><h2>Compatibility and discovery</h2><button data-action="compatibility-toggle">${this._reportOpen ? "Close report tools" : "Collect compatibility report"}</button></div>
       ${(status.listeners || []).map(port => `<div class="detail-row"><span>TCP ${this._escape(port.requested_port)}</span><strong>${port.bound ? "Listening" : this._escape(`${port.error || "Unavailable"} (${port.errno ?? "unknown"})`)}</strong></div>`).join("")}
       ${(status.profile_catalogue || []).length ? `<details data-disclosure="profile-catalogue"><summary>Available protocol profiles (${status.profile_catalogue.length})</summary><p>Grouped by family; variants and fallback maps are not interchangeable protocols. Counts are implemented maxima: fields absent from a device remain unavailable. Unknown models can use a checked common map after acceptance.</p>${this._catalogueGroups(status.profile_catalogue)}</details>` : ""}
+      ${this._device && this._tab === 'activity' ? '' : this._disclosure('incident-diagnostics', 'Diagnostics: local incidents and manual reports', this._incidentsView(status))}
       ${this._reportOpen ? `${this._discoveryView(status)}<p>Works before adding an inverter. Collect for up to two minutes, then download one package with local findings. Reconnect the collector to include startup. No diagnostic writes or resets are sent.</p>
         ${[["inverter_model", "Exact inverter model"], ["collector_model", "Collector model"], ["firmware", "Known firmware"], ["original_endpoint", "Original cloud host:port"], ["symptom", "Symptoms"], ["network_setup", "DNS/routing setup"], ["reference_readings", "Optional display/app readings with time and units"]].map(([key, label]) => `<label class="field-label" for="report-${key}">${label} <span class="optional">Optional</span></label><input id="report-${key}" maxlength="500" data-draft="report:${key}" value="${this._escape(this._draft("report", key, ""))}" placeholder="Unknown is OK">`).join("")}
         <div class="actions"><button class="primary" data-action="compatibility-start" ${capture.active ? "disabled" : ""}>Start collection</button><button data-action="compatibility-stop" ${capture.active ? "" : "disabled"}>Stop collection</button><button data-action="compatibility-analyze">Analyze collected evidence</button></div>
@@ -742,6 +763,129 @@ class SolarInverterBridgePanel extends HTMLElement {
         <label class="switch-label"><input id="report-raw" type="checkbox" data-draft="report:raw" ${this._draft("report", "raw", false) ? "checked" : ""}> Include raw protocol exchange</label><p class="field-help">Original bytes may contain hardware identifiers or network settings. Without them, unknown parser failures may not be reproducible. The description you entered is included; review it before sharing. Nothing is uploaded automatically.</p>
         <div class="actions"><button data-action="compatibility-download">Download compatibility ZIP</button><button data-action="compatibility-copy" ${report.analysis ? "" : "disabled"}>Copy issue description</button></div>
         <details><summary>Advanced: silent collector bootstrap</summary><p>Applies to new silent connections on all ports. Port numbers are hints, not protocol proof. With shared NAT, isolate the collector during setup if its dialect cannot be identified.</p><label class="field-label" for="bootstrap-preference">Transport override</label><select id="bootstrap-preference" data-draft="network:bootstrap"><option value="auto" ${this._draft("network", "bootstrap", status.bootstrap_preference || "auto") === "auto" ? "selected" : ""}>Auto</option><option value="at" ${this._draft("network", "bootstrap", status.bootstrap_preference) === "at" ? "selected" : ""}>AT</option><option value="binary" ${this._draft("network", "bootstrap", status.bootstrap_preference) === "binary" ? "selected" : ""}>Binary EyeBond</option></select><button data-action="bootstrap-save">Save bootstrap preference</button></details>` : ""}</section>`;
+  }
+
+  _issueSearchLink(value) {
+    // Backend/user text is not a trusted navigation target, even after HTML escaping.
+    try {
+      const url = new URL(value);
+      if (url.origin !== 'https://github.com' || url.username || url.password
+          || url.pathname !== '/jay0x/solar-inverter-cloud-bridge/issues') return '';
+      return `<a class="ha-entities-link" href="${this._escape(url.href)}" target="_blank" rel="noopener noreferrer">Search existing GitHub issues</a>`;
+    } catch (_) { return ''; }
+  }
+
+  _incidentMetadataFields(scope, prefix, failure = false) {
+    const fields = [['inverter_model', 'Inverter model'], ['collector_model', 'Collector model'], ['firmware', 'Firmware']];
+    if (failure) fields.push(['symptom', 'Symptoms']);
+    return `<div class="incident-fields">${fields.map(([key, label]) => `<label class="field-label">${label} <span class="optional">Optional</span><input id="${prefix}-${key}" maxlength="500" data-draft="${this._escape(scope + ':' + key)}" value="${this._escape(this._draft(scope, key, ''))}"></label>`).join('')}</div>`;
+  }
+
+  _incidentReportView(scope, kind) {
+    const report = this._incidentReports?.[scope]?.[kind];
+    if (!report?.issue_summary) return '';
+    return `<div class="incident-report"><h3>Downloaded report description</h3><pre>${this._escape(report.issue_summary)}</pre><div class="incident-actions"><button data-action="incident-copy" data-value="${kind}">Copy report description</button>${this._issueSearchLink(report.search_url)}</div></div>`;
+  }
+
+  _incidentsView(status, device = null) {
+    const view = (device ? device.incidents : status.incidents) || {};
+    const global = status.incidents || view;
+    const limits = global.limits || view.limits || {};
+    const scope = device?.device_id || 'global';
+    const entries = view.incidents || [];
+    const devices = status.devices || [];
+    const target = device || devices.find(item => item.device_id === this._draft('incidents', 'watch_device', '')) || devices[0];
+    const watch = global.watch || {};
+    const watches = watch.items || (watch.device_id ? [watch] : []);
+    const targetWatch = target?.incidents?.watch || watches.find(item => item.device_id === target?.device_id) || {};
+    const watchScope = 'incident-watch:' + (target?.device_id || 'none');
+    const failureScope = 'incident-report:' + scope;
+    const feedbackScope = 'incident-feedback:' + scope;
+    const esc = value => this._escape(value ?? 'Unknown');
+    return `<section class="surface incident-panel" data-incident-scope="${esc(scope)}"><h2>Local incident black box</h2>
+      <p>Evidence stays in Home Assistant. Nothing is uploaded automatically and no GitHub issue is created. Download a report, review it, search existing issues, then choose whether to share it.</p>
+      <div class="incident-recording-controls"><label class="switch-label"><input id="incident-enabled" type="checkbox" data-draft="incidents:enabled" aria-describedby="incident-recording-status" ${this._draft('incidents', 'enabled', global.enabled !== false) ? 'checked' : ''}> Enable local incident recording</label><div class="incident-actions"><button data-action="incident-configure">Save incident recording</button></div><p id="incident-recording-status" class="field-help" role="status" aria-live="polite"></p></div>
+      <p class="field-help">Global setting for all devices and bridge/pre-enrollment events. Known recovered problems update these counters without pop-up alerts.</p>
+      <div class="incident-storage"><p>Persistence: ${esc(global.persistence || 'unknown')} · ${global.pending_write ? 'Pending write' : 'No pending write'}</p>
+      ${global.persistence === 'memory_only' ? '<p>Memory-only evidence does not survive a Home Assistant restart.</p>' : ''}
+      ${global.persistence_error ? `<p class="dialog-error">Persistence error: ${esc(global.persistence_error)}</p>` : ''}
+      <p>Rolling buffer: ${esc(limits.ring_seconds ?? 60)} seconds before failure + ${esc(limits.tail_seconds ?? 10)} seconds after · ${esc(limits.ring_bytes ?? 524288)} bytes maximum.</p>
+      <p>Storage bounds: ${esc(limits.fingerprints ?? 32)} fingerprints · ${esc(limits.samples_per_problem ?? 3)} samples per problem · ${esc(global.serialized_sample_bytes ?? 0)} / ${esc(limits.serialized_sample_bytes ?? 16777216)} serialized sample bytes.</p>
+      <p>Dropped events: ${esc(global.dropped_events ?? 0)} · Evicted incidents: ${esc(global.evicted_incidents ?? 0)}</p></div>
+      <div class="subsection incident-watch"><h3>Catch next failure</h3><p>A watch only observes events; it never starts polling, resumes collection, connects a collector, or sends device commands. An active watch can retain its next failure even when global recording is off. Its status and expiration are saved by the backend when persistence is available.</p>
+      ${!device && devices.length ? `<label class="field-label" for="incident-watch-device">Watch device</label><select id="incident-watch-device" data-draft="incidents:watch_device">${devices.map(item => `<option value="${esc(item.device_id)}" ${item === target ? 'selected' : ''}>${esc(item.name || item.device_id)}</option>`).join('')}</select>` : ''}
+      ${target ? `${target.enabled === false ? '<p class="field-help">Collection is paused for this device. This watch will not enable it; a polling failure can only be captured if collection is separately resumed.</p>' : ''}
+      <p class="watch-status">Watch: ${esc(targetWatch.status || (targetWatch.active ? 'armed' : 'not armed'))} · ${targetWatch.active ? 'Active' : 'Inactive'}${targetWatch.expires_at ? ' · Expires: ' + esc(this._formatTime(targetWatch.expires_at)) : ''}${targetWatch.fingerprint ? ' · Captured: ' + esc(targetWatch.fingerprint) : ''}</p>
+      <label class="field-label" for="incident-watch-hours">Watch duration, hours (1–24)</label><input id="incident-watch-hours" type="number" required min="1" max="24" step="1" data-draft="${esc(watchScope + ':hours')}" value="${esc(this._draft(watchScope, 'hours', 1))}">
+      <div class="incident-actions"><button data-action="incident-watch" data-device="${esc(target.device_id)}">Catch next failure</button><button data-action="incident-cancel_watch" data-device="${esc(target.device_id)}" ${targetWatch.active ? '' : 'disabled'}>Cancel watch</button></div>` : '<p>Add an inverter to arm a device watch. Bridge and pre-enrollment incidents are still listed below.</p>'}
+      ${!device && watches.length > 1 ? `<ul>${watches.map(item => `<li>${esc(devices.find(d => d.device_id === item.device_id)?.name || item.device_id)}: ${esc(item.status)}${item.expires_at ? ' · Expires: ' + esc(this._formatTime(item.expires_at)) : ''}${item.fingerprint ? ' · Captured: ' + esc(item.fingerprint) : ''}</li>`).join('')}</ul>` : ''}</div>
+      <div class="subsection"><h3>Recorded incidents (${entries.length})</h3><p>Repeated failures share a fingerprint and counters; retained samples are bounded.</p>
+      <div class="incident-cards">${entries.map(item => `<article class="incident-card ${item.needs_attention ? 'attention' : ''}" data-fingerprint="${esc(item.fingerprint)}"><h3>${esc(item.known_issue?.title || item.code)}</h3>
+        <p>${esc(devices.find(d => d.device_id === item.device_id)?.name || item.device_id || 'Bridge / pre-enrollment')}</p>
+        <dl><div><dt>Fingerprint</dt><dd><code>${esc(item.fingerprint)}</code></dd></div><div><dt>Code</dt><dd>${esc(item.code)}</dd></div><div><dt>Stage / profile / transport</dt><dd>${esc(item.stage)} / ${esc(item.profile_id)} / ${esc(item.transport)}</dd></div>
+        <div><dt>First seen</dt><dd>${esc(this._formatTime(item.first_seen))}</dd></div><div><dt>Last seen</dt><dd>${esc(this._formatTime(item.last_seen))}</dd></div>
+        <div><dt>Count / recovered / samples</dt><dd>${esc(item.count ?? 0)} / ${esc(item.recovered_count ?? 0)} / ${esc(item.sample_count ?? 0)}</dd></div><div><dt>Status</dt><dd>${esc(item.status)} · ${item.needs_attention ? 'Needs attention' : 'No attention needed'}</dd></div></dl>
+        ${item.known_issue ? `<p>${esc(item.known_issue.status)}: ${esc(item.known_issue.advice || '')}</p>` : ''}
+        <div class="incident-actions">${this._issueSearchLink(item.search_url)}<button data-action="incident-download" data-value="${esc(item.fingerprint)}" data-device="${esc(item.device_id ?? device?.device_id ?? '')}">Download incident ZIP</button><button class="danger-outline" data-action="incident-delete" data-value="${esc(item.fingerprint)}" data-device="${esc(item.device_id ?? device?.device_id ?? '')}">Delete local evidence</button></div></article>`).join('') || '<p>No incidents recorded.</p>'}</div>
+      <details data-disclosure="incident-export-metadata"><summary>Optional failure report description</summary>${this._incidentMetadataFields(failureScope, 'incident-report', true)}</details>
+      <label class="switch-label"><input id="incident-raw" type="checkbox" ${this._incidentRaw ? 'checked' : ''}> Include raw protocol exchange in the next incident export</label><p class="field-help">Sanitized by default. Raw bytes may contain hardware identifiers or network settings. This choice resets after export or page reload. Your optional description is included verbatim; review it before sharing. Deleting local evidence does not remove downloaded reports.</p>
+      ${this._incidentReportView(scope, 'failure')}</div>
+      <details class="subsection" data-disclosure="incident-feedback"><summary>User compatibility feedback</summary><p>A separate user-reported compatibility report, not a failure export. No capture or device command is started. Download and review the report before manually sharing it.</p>
+      ${this._incidentMetadataFields(feedbackScope, 'incident-feedback')}
+      <label class="field-label" for="incident-feedback-feature">Feature ID</label><input id="incident-feedback-feature" required maxlength="96" pattern="[A-Za-z_][A-Za-z0-9_.:\\-]{0,95}" data-draft="${esc(feedbackScope + ':feature')}" value="${esc(this._draft(feedbackScope, 'feature', 'telemetry'))}"><p class="field-help">For example: telemetry, clock_sync, or setting.output_voltage_setting.</p>
+      <label class="field-label" for="incident-feedback-result">Result</label><select id="incident-feedback-result" data-draft="${esc(feedbackScope + ':result')}">${[['unknown', 'Unknown'], ['working', 'Working'], ['not_working', 'Not working']].map(([key, label]) => `<option value="${key}" ${this._draft(feedbackScope, 'result', 'unknown') === key ? 'selected' : ''}>${label}</option>`).join('')}</select>
+      <label class="field-label" for="incident-feedback-comment">Comment <span class="optional">Optional</span></label><textarea id="incident-feedback-comment" rows="3" maxlength="2000" data-draft="${esc(feedbackScope + ':comment')}">${esc(this._draft(feedbackScope, 'comment', ''))}</textarea>
+      <p class="field-help">Model, firmware, and comments are included verbatim and may identify you. Nothing is uploaded automatically.</p><button data-action="incident-feedback" ${device ? `data-device="${esc(device.device_id)}"` : ''}>Download feedback report</button>${this._incidentReportView(scope, 'feedback')}</details></section>`;
+  }
+
+  _incidentAction(action, fingerprint, device) {
+    const command = action.slice('incident-'.length);
+    const scope = this.querySelector('[data-incident-scope]')?.dataset.incidentScope || 'global';
+    if (command === 'copy') {
+      const summary = this._incidentReports?.[scope]?.[fingerprint]?.issue_summary || '';
+      return Promise.resolve().then(() => navigator.clipboard.writeText(summary)).catch(() => {
+        this._error = 'Clipboard unavailable. Select the report description below to copy it.';
+        this._render();
+      });
+    }
+    const request = {type: 'solar_inverter_bridge/incidents', action: command};
+    if (device !== undefined) request.device_id = device;
+    if (command === 'configure') request.enabled = this.querySelector('#incident-enabled').checked;
+    if (command === 'watch') {
+      const input = this.querySelector('#incident-watch-hours');
+      if (!input?.reportValidity() || !Number.isInteger(Number(input.value))) return;
+      request.hours = Number(input.value);
+    }
+    if (command === 'delete' || command === 'download') request.fingerprint = fingerprint;
+    if (command === 'download' || command === 'feedback') {
+      const prefix = command === 'download' ? 'incident-report' : 'incident-feedback';
+      request.metadata = {};
+      for (const key of ['inverter_model', 'collector_model', 'firmware', ...(command === 'download' ? ['symptom'] : [])]) {
+        request.metadata[key] = (this.querySelector(`#${prefix}-${key}`)?.value || '').slice(0, 500);
+      }
+      if (command === 'download') request.include_raw = this.querySelector('#incident-raw')?.checked === true;
+      else {
+        const feature = this.querySelector('#incident-feedback-feature');
+        if (!feature?.reportValidity()) return;
+        request.feedback = [{feature: feature.value, result: this.querySelector('#incident-feedback-result').value,
+          comment: this.querySelector('#incident-feedback-comment').value.slice(0, 2000)}];
+      }
+    }
+    return this._call(request, result => {
+      if (command === 'configure') this._clearDraft('incidents', 'enabled');
+      if (command === 'download' || command === 'feedback') {
+        this._incidentReports ||= {};
+        this._incidentReports[scope] ||= {};
+        this._incidentReports[scope][command === 'download' ? 'failure' : 'feedback'] = result.analysis;
+        if (command === 'download') this._incidentRaw = false;
+        if (result.base64) {
+          const data = Uint8Array.from(atob(result.base64), char => char.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([data], {type: 'application/zip'}));
+          const link = document.createElement('a'); link.href = url; link.download = result.filename; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+      }
+    });
   }
 
   _discoveryView(status) {
@@ -800,7 +944,7 @@ class SolarInverterBridgePanel extends HTMLElement {
   _issueLabel(code) {
     return {TimeoutError: "Inverter response timed out", ConnectionResetError: "Collector connection reset",
       collector_closed: "Collector disconnected", crc_mismatch: "Invalid response checksum",
-      clock_correction_too_large: "Clock difference exceeds five minutes", storage_unavailable: "Storage unavailable",
+      clock_correction_too_large: "Clock correction blocked by a previous version's limit", clock_correction_not_required: "Clock is already within the synchronization threshold", storage_unavailable: "Storage unavailable",
       unsupported_or_unconfirmed_identity: "Unsupported inverter signature"}[code] || this._valueLabel(code);
   }
 
@@ -824,7 +968,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       ambiguous_schedule_window: "Start time must be earlier than stop time. Overnight windows are not supported.",
       soc_recovery_must_exceed_protection: "Recovery SOC must be higher than protection SOC.",
       editing_not_allowed: "The saved control mode does not allow this change.",
-      transport_write_unsupported: "Control is unavailable for the current profile/session. For an inferred profile, review experimental control permission and the saved mode first.",
+      transport_write_unsupported: "Control is unavailable for the current profile/session. Check implemented commands, profile acceptance, and fresh readings from this connection.",
       transport_reset_unsupported: "Module reset is not qualified for this transport. No cooldown or reset command was reserved.",
       binary_route_not_qualified: "No supported inverter route/profile could be verified. Collect a compatibility report with the original exchange below.",
       binary_full_identity_missing: "The collector did not supply an authoritative full PN. Collect startup evidence; a heartbeat prefix is insufficient.",
@@ -871,6 +1015,7 @@ class SolarInverterBridgePanel extends HTMLElement {
   }
 
   _action(action, value, device) {
+    if (action.startsWith('incident-')) return this._incidentAction(action, value, device);
     if (action === "compatibility-open") { this._reportOpen=true; this._disclosures['setup-help']=true; this._disclosures['home-help']=true; this._render(); this.querySelector('#report-inverter_model')?.scrollIntoView({block:'center'}); return; }
     if (action === "profile-discover" || action === "profile-more") return this._call({type:"solar_inverter_bridge/profile",action:"discover",collector_sha256:value,resume:action==="profile-more"});
     if (action === "profile-cancel") return this._call({type:"solar_inverter_bridge/profile",action:"cancel",collector_sha256:value});
@@ -1024,7 +1169,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "journal") return this._downloadJournal();
     if (action === "download") {
       return this._call({type: "solar_inverter_bridge/diagnostics"}, diagnostic => {
-        diagnostic.frontend = {version: "0.22.0", view: this._tab};
+        diagnostic.frontend = {version: "0.24.0", view: this._tab};
         const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostic, null, 2)], {type: "application/json"}));
         const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-diagnostics.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);

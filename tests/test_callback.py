@@ -1,6 +1,8 @@
 """Real loopback UDP/TCP callback lifecycle; never contacts a physical collector."""
+import ast
 import asyncio
 from hashlib import sha256
+from pathlib import Path
 import socket
 import struct
 import unittest
@@ -52,6 +54,8 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         request = str(uuid.uuid4())
         first = await self.service.callback.connect(request, self.config)
         self.assertEqual(first["state"], "waiting")
+        with self.assertRaisesRegex(ValueError, "callback_identity_mismatch"):
+            self.service.callback.enrollment_options(request, sha256(b"CALLBACK-ONE").hexdigest())
         datagram = await asyncio.wait_for(self.messages.get(), 2)
         self.assertEqual(datagram, f"set>server=127.0.0.1:{self.config['callback_port']};".encode())
         await self.service.callback.connect(request, self.config)
@@ -62,10 +66,16 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(identity, self.service.connections)
         self.assertEqual(self.service.callback.requests[request]["collector_sha256"], identity)
         self.assertFalse(self.service.candidates[identity]["ready"])
+        with self.assertRaisesRegex(ValueError, "callback_identity_mismatch"):
+            self.service.callback.enrollment_options(request, sha256(b"OTHER-PN").hexdigest())
         with self.assertRaises(TimeoutError):
             await asyncio.wait_for(reader.read(1), 0.1)
         self.assertEqual(self.service.callback.bind(request, "device", identity), self.config)
         self.assertEqual(self.service.callback.requests[request]["expected_identity"], identity)
+        with patch("custom_components.solar_inverter_bridge.core.callback.monotonic",
+                   return_value=self.service.callback.requests[request]["expires"] + 1):
+            with self.assertRaisesRegex(ValueError, "connection_request_expired"):
+                self.service.callback.enrollment_options(request, identity)
 
     async def test_saved_callback_rejects_a_different_collector_and_stops_retries(self):
         request = str(uuid.uuid4())
@@ -201,6 +211,77 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         record = next(iter(self.service.callback.requests.values()))
         self.assertEqual(record["expected_identity"], device["collector_sha256"])
 
+    async def test_one_hundred_reconnects_keep_manual_dedup_and_bounded_attempts(self):
+        callback = self.service.callback
+        callback.configure({"device": self.config})
+        callback.ports.add(self.config["callback_port"])
+        device = {"device_id": "device", "collector_sha256": sha256(b"EXPECTED").hexdigest()}
+        manual = str(uuid.uuid4())
+        with patch("custom_components.solar_inverter_bridge.core.callback.monotonic", return_value=1000) as clock, \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send, \
+                patch.object(callback, "ensure_listener", new_callable=AsyncMock):
+            await callback.connect(manual, self.config, expected_identity=device["collector_sha256"], device_id="device")
+            self.assertTrue(callback.admit("127.0.0.1", self.config["callback_port"], device["collector_sha256"]))
+            manual_expiry = callback.requests[manual]["expires"]
+            for cycle in range(100):
+                clock.return_value = 1000 + 121 * (cycle + 1)
+                await callback.reconnect(device)
+                self.assertEqual(send.await_count, cycle + 2)
+                self.assertTrue(callback.admit("127.0.0.1", self.config["callback_port"], device["collector_sha256"]))
+                automatic = [r for r in callback.requests.values() if r.get("automatic")]
+                self.assertEqual(len(automatic), 1)
+                self.assertLessEqual(len(callback.requests), 2)
+                record = automatic[0]
+                await callback.connect(record["request_id"], self.config,
+                                       expected_identity=device["collector_sha256"], device_id="device")
+                await callback.reconnect(device)
+                if clock.return_value < manual_expiry:
+                    self.assertEqual(callback.requests[manual]["expires"], manual_expiry)
+                    await callback.connect(manual, self.config, expected_identity=device["collector_sha256"], device_id="device")
+                else:
+                    self.assertNotIn(manual, callback.requests)
+                self.assertEqual(send.await_count, cycle + 2, "Status queries and rate-limited reconnects cannot resend")
+            self.assertFalse(self.service.issues)
+            self.service.sources = ("127.0.0.0/8",)
+            await callback.connect(str(uuid.uuid4()), {**self.config, "collector_ip": "127.0.0.2"},
+                                   expected_identity="another-full-identity", device_id="another-device")
+            self.assertEqual(send.await_count, 102)
+
+    async def test_expired_pending_request_retains_manual_id_without_blocking_new_attempt(self):
+        callback = self.service.callback
+        request = str(uuid.uuid4())
+        with patch("custom_components.solar_inverter_bridge.core.callback.monotonic", return_value=1000) as clock, \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send, \
+                patch.object(callback, "ensure_listener", new_callable=AsyncMock):
+            await callback.connect(request, self.config)
+            clock.return_value = 1121
+            self.assertEqual((await callback.connect(request, self.config))["state"], "timed_out")
+            self.assertEqual(send.await_count, 1)
+            with self.assertRaisesRegex(ValueError, "connection_request_conflict"):
+                await callback.connect(request, {**self.config, "method": "auto"})
+            await callback.connect(str(uuid.uuid4()), self.config)
+            self.assertEqual(send.await_count, 2)
+            clock.return_value = 1601
+            await callback.connect(str(uuid.uuid4()), options())
+            self.assertNotIn(request, callback.requests, "Manual result retention must expire")
+            self.assertEqual(send.await_count, 2)
+
+    async def test_request_capacity_never_evicts_inflight_requests(self):
+        callback = self.service.callback
+        self.service.sources = ("127.0.0.0/8",)
+        with patch("custom_components.solar_inverter_bridge.core.callback.monotonic", return_value=1000), \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send, \
+                patch.object(callback, "ensure_listener", new_callable=AsyncMock):
+            for index in range(32):
+                await callback.connect(str(uuid.uuid4()), {**self.config, "collector_ip": f"127.0.0.{index + 1}"},
+                                       expected_identity=f"identity-{index}", device_id=f"device-{index}", _automatic=True)
+            pending = dict(callback.requests)
+            with self.assertRaisesRegex(ValueError, "connection_request_capacity"):
+                await callback.connect(str(uuid.uuid4()), self.config,
+                                       expected_identity="identity-0", device_id="device-0", _automatic=True)
+            self.assertEqual(callback.requests, pending)
+            self.assertEqual(send.await_count, 32)
+
     async def test_auto_reuses_existing_owner_instead_of_starting_second_path(self):
         first = str(uuid.uuid4())
         await self.service.callback.connect(first, self.config)
@@ -231,6 +312,22 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.messages.empty())
         await self.service.callback.connect(str(uuid.uuid4()), self.config)
         self.assertEqual(await asyncio.wait_for(self.messages.get(), 2), payload(self.config))
+
+    async def test_connected_view_and_admission_preserve_callback_route_constraints(self):
+        request = str(uuid.uuid4())
+        callback = self.service.callback
+        await callback.connect(request, self.config)
+        await self.identify(b"ROUTE-CHECK")
+        await self.wait_state(request, "connected")
+        record = callback.requests[request]
+        self.assertEqual(callback.view(record)["state"], "connected")
+        for config in ({**self.config, "collector_ip": "127.0.0.2"},
+                       {**self.config, "callback_port": 8899 if self.config["callback_port"] != 8899 else 8900},
+                       {**self.config, "method": "redirect"}):
+            self.assertEqual(callback.view({**record, "config": config})["state"], "disconnected")
+        callback.requests[request] = {**record, "config": {**self.config, "method": "redirect"}}
+        self.assertFalse(callback.admit("127.0.0.1", self.config["callback_port"], record["collector_sha256"]),
+                         "Stored redirect hints cannot authorize a callback socket")
 
     def enrolled(self, name=b"SWITCH-COLLECTOR", enabled=True):
         device = {"device_id": "saved-device", "collector_sha256": sha256(name).hexdigest(), "enabled": enabled}
@@ -269,8 +366,10 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         callback = await self.wait_owner(identity, self.config["callback_port"])
         self.assertIsNot(callback, old)
         self.assertFalse(self.service.callback.owner_allowed(old))
-        result = await self.service.callback.change(str(uuid.uuid4()), device["device_id"], options("redirect"), saved.append)
+        redirect = {**self.config, "method": "redirect"}
+        result = await self.service.callback.change(str(uuid.uuid4()), device["device_id"], redirect, saved.append)
         self.assertEqual(result["state"], "connected")
+        self.assertEqual(saved[-1]["collector_ip"], "127.0.0.1")
         self.assertIs(self.service.connections[identity], old)
         self.assertTrue(self.service.callback.live(callback))
         self.assertFalse(self.service.callback.owner_allowed(callback))
@@ -330,11 +429,206 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(device["device_id"], self.service.callback.blocked)
         self.assertFalse(self.service.connections)
 
-    async def test_redirect_keeps_collector_ip_without_sending_udp(self):
+    async def test_redirect_keeps_hints_without_listener_or_udp(self):
         device = self.enrolled()
-        saved = options("redirect", "127.0.0.1", "127.0.0.1")
-        self.assertEqual(saved["collector_ip"], "127.0.0.1")
-        result = await self.service.callback.change(str(uuid.uuid4()), device["device_id"], saved, lambda config: None)
-        self.assertEqual(result["connection_method"], "redirect")
-        self.assertFalse(result["sent"])
+        persisted = []
+        before = len(self.service.servers)
+        with patch.object(self.service.callback, "ensure_listener", new_callable=AsyncMock,
+                          side_effect=OSError("port_in_use")) as listener, \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send:
+            for host in ("", "192.168.200.17"):
+                saved = options("redirect", "127.0.0.1", host)
+                result = await self.service.callback.change(str(uuid.uuid4()), device["device_id"], saved, persisted.append)
+                self.assertEqual(persisted[-1], saved)
+                self.assertEqual(result["collector_ip"], "127.0.0.1")
+                self.assertEqual(result["connection_method"], "redirect")
+                self.assertFalse(result["sent"])
+                await self.service.callback.reconnect(device)
+            listener.assert_not_awaited()
+            send.assert_not_awaited()
+        self.assertEqual(len(self.service.servers), before)
         self.assertTrue(self.messages.empty())
+
+    async def test_redirect_wizard_binds_selected_full_pn_with_unused_retained_ip(self):
+        callback = self.service.callback
+        config = options("redirect", "192.168.200.17")
+        request = str(uuid.uuid4())
+        with patch.object(callback, "ensure_listener", new_callable=AsyncMock) as listener, \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send:
+            result = await callback.connect(request, config)
+            self.assertEqual(result["state"], "waiting_for_connection")
+            port = self.service.servers[0].sockets[0].getsockname()[1]
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            self.clients.append(writer)
+            pn = b"REDIRECT-WIZARD-FULL-PN"
+            writer.write(b"AT+DTUPN:" + pn + b"\r\n")
+            await writer.drain()
+            identity = sha256(pn).hexdigest()
+            holder = await self.wait_owner(identity, port)
+            self.assertEqual(holder["source"], "127.0.0.1")
+            self.assertEqual(callback.enrollment_options(request, identity), config)
+            with patch("custom_components.solar_inverter_bridge.core.callback.monotonic",
+                       return_value=callback.requests[request]["expires"] + 1):
+                self.assertEqual(callback.enrollment_options(request, identity), config,
+                                 "Redirect enrollment must not depend on the callback admission deadline")
+            with self.assertRaisesRegex(ValueError, "verification_required"):
+                await self.service.enroll(identity, "Still requires native verification")
+            self.assertEqual(callback.bind(request, "selected-device", identity), config)
+            self.assertEqual(callback.requests[request]["expected_identity"], identity)
+            self.assertEqual(callback.identities[identity], "selected-device")
+            listener.assert_not_awaited()
+            send.assert_not_awaited()
+
+    async def test_redirect_change_ignores_hint_allowlist_and_other_collector_at_hint(self):
+        device = self.enrolled()
+        callback = self.service.callback
+        port = self.service.servers[0].sockets[0].getsockname()[1]
+        for pn in (b"SWITCH-COLLECTOR", b"OTHER-COLLECTOR"):
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            self.clients.append(writer)
+            writer.write(b"AT+DTUPN:" + pn + b"\r\n")
+            await writer.drain()
+            await self.wait_owner(sha256(pn).hexdigest(), port)
+        owner = self.service.connections[device["collector_sha256"]]
+        saved = []
+        with patch.object(callback, "ensure_listener", new_callable=AsyncMock) as listener, \
+                patch("custom_components.solar_inverter_bridge.core.callback.send_callback", new_callable=AsyncMock) as send:
+            for ip, error in (("192.168.200.17", "callback_source_not_allowed"),
+                              ("127.0.0.1", "callback_identity_mismatch")):
+                config = options("redirect", ip)
+                result = await callback.change(str(uuid.uuid4()), device["device_id"], config, saved.append)
+                self.assertEqual(result["state"], "connected")
+                self.assertEqual(saved[-1], config)
+                self.assertIs(self.service.connections[device["collector_sha256"]], owner)
+                for method in ("callback", "auto"):
+                    active = {**self.config, "method": method, "collector_ip": ip}
+                    with self.assertRaisesRegex(ValueError, error):
+                        await callback.change(str(uuid.uuid4()), device["device_id"], active, saved.append)
+                    with self.assertRaisesRegex(ValueError, error):
+                        await callback.connect(str(uuid.uuid4()), active, expected_identity=device["collector_sha256"])
+            listener.assert_not_awaited()
+            send.assert_not_awaited()
+        self.assertEqual(len(saved), 2)
+
+    async def test_redirect_retained_ip_never_authorizes_actual_tcp_source(self):
+        config = options("redirect", "127.0.0.2")
+        await self.service.callback.connect(str(uuid.uuid4()), config)
+        self.assertEqual(self.service.sources, ("127.0.0.1",))
+        port = self.service.servers[0].sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port, local_addr=("127.0.0.2", 0))
+        self.clients.append(writer)
+        self.assertEqual(await asyncio.wait_for(reader.read(), 2), b"")
+        self.assertEqual(self.service.reject_reasons["source_not_allowed"], 1)
+        self.assertFalse(self.service.connections)
+        self.assertFalse(self.service.candidates)
+
+    async def test_superseded_manual_change_cannot_revert_saved_connection(self):
+        device = self.enrolled(enabled=False)
+        callback = self.service.callback
+        saved = []
+        request = str(uuid.uuid4())
+        with patch("custom_components.solar_inverter_bridge.core.callback.monotonic", return_value=1000) as clock:
+            await callback.change(request, device["device_id"], self.config, saved.append)
+            await callback.change(str(uuid.uuid4()), device["device_id"], options("redirect"), saved.append)
+            with self.assertRaisesRegex(ValueError, "connection_request_conflict"):
+                await callback.change(request, device["device_id"], self.config, saved.append)
+            self.assertEqual(len(saved), 2)
+            clock.return_value = 1601
+            await callback.connect(str(uuid.uuid4()), options())
+            self.assertNotIn(request, callback.requests)
+        self.assertTrue(self.messages.empty())
+
+    async def test_queued_verify_sends_nothing_after_connection_change(self):
+        device = self.enrolled()
+        identity = device["collector_sha256"]
+        port = self.service.servers[0].sockets[0].getsockname()[1]
+        _, writer = await asyncio.open_connection("127.0.0.1", port)
+        self.clients.append(writer)
+        writer.write(b"AT+DTUPN:SWITCH-COLLECTOR\r\n")
+        await writer.drain()
+        old = await self.wait_owner(identity, port)
+        await self.service.callback.change(str(uuid.uuid4()), device["device_id"], self.config, lambda config: None)
+        await self.identify(b"SWITCH-COLLECTOR")
+        current = await self.wait_owner(identity, self.config["callback_port"])
+
+        class QueuedLock:
+            def __init__(self):
+                self.lock = asyncio.Lock()
+                self.waiters = asyncio.Queue()
+            def locked(self):
+                return self.lock.locked()
+            async def __aenter__(self):
+                self.waiters.put_nowait(asyncio.current_task())
+                await self.lock.acquire()
+            async def __aexit__(self, *args):
+                self.lock.release()
+
+        lock = current["lock"] = QueuedLock()
+        await lock.lock.acquire()
+        change = asyncio.create_task(self.service.callback.change(
+            str(uuid.uuid4()), device["device_id"], {**self.config, "method": "redirect"}, lambda config: None))
+        verify = None
+        try:
+            self.assertIs(await asyncio.wait_for(lock.waiters.get(), 2), change)
+            with patch("custom_components.solar_inverter_bridge.core.exchange.read_snapshot", new_callable=AsyncMock) as read, \
+                    patch.object(current["reader"], "send", new_callable=AsyncMock) as send:
+                verify = asyncio.create_task(self.service.verify(identity, discover=True))
+                self.assertIs(await asyncio.wait_for(lock.waiters.get(), 2), verify)
+                lock.lock.release()
+                self.assertEqual((await change)["state"], "connected")
+                with self.assertRaisesRegex(ConnectionError, "collector_session_changed"):
+                    await verify
+                self.assertIs(self.service.connections[identity], old)
+                read.assert_not_awaited()
+                send.assert_not_awaited()
+                self.assertTrue(self.service.callback.live(current))
+                self.assertNotIn(identity, self.service.profile_searches)
+        finally:
+            for task in (change, verify):
+                if task is not None:
+                    task.cancel()
+            await asyncio.gather(*(t for t in (change, verify) if t is not None), return_exceptions=True)
+
+    async def test_verify_rejects_owner_while_connection_switch_is_pending(self):
+        device = self.enrolled()
+        identity = device["collector_sha256"]
+        await self.service.callback.change(str(uuid.uuid4()), device["device_id"], self.config, lambda config: None)
+        await self.identify(b"SWITCH-COLLECTOR")
+        holder = await self.wait_owner(identity, self.config["callback_port"])
+        self.service.callback.switching.add(device["device_id"])
+        try:
+            with patch.object(holder["reader"], "send", new_callable=AsyncMock) as send:
+                with self.assertRaisesRegex(ConnectionError, "collector_session_changed"):
+                    await self.service.verify(identity)
+                send.assert_not_awaited()
+                self.assertTrue(self.service.callback.live(holder))
+        finally:
+            self.service.callback.switching.clear()
+
+
+class ConnectionOptionsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_redirect_hints_skip_interface_validation_but_callback_still_requires_it(self):
+        # Execute the real, isolated adapter function without HA's registration
+        # decorators. This is an offline option contract, not an HA lifecycle test.
+        path = Path(__file__).parents[1] / "custom_components/solar_inverter_bridge/websocket_api.py"
+        tree = ast.parse(path.read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "_connection_options")
+        namespace = {"__package__": "custom_components.solar_inverter_bridge"}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
+        configure = namespace["_connection_options"]
+        message = {"method": "redirect", "collector_ip": "192.168.1.20", "callback_host": "",
+                   "callback_port": 8899, "udp_port": 58899}
+        with patch("custom_components.solar_inverter_bridge.network_hints.async_network_hints", new_callable=AsyncMock,
+                   return_value={"addresses": [{"address": "192.168.1.10"}]}) as hints:
+            for host in ("", "192.168.99.99"):
+                result = await configure(None, {**message, "callback_host": host})
+                self.assertEqual(result["collector_ip"], message["collector_ip"])
+                self.assertEqual(result.get("callback_host", ""), host)
+            hints.assert_not_awaited()
+            for method in ("auto", "callback"):
+                with self.assertRaisesRegex(ValueError, "callback_host_not_local"):
+                    await configure(None, {**message, "method": method, "callback_host": "192.168.99.99"})
+                result = await configure(None, {**message, "method": method, "callback_host": "192.168.1.10"})
+                self.assertEqual(result["method"], method)
+            with self.assertRaisesRegex(ValueError, "invalid_callback_address"):
+                await configure(None, {**message, "method": "callback", "collector_ip": "", "callback_host": "192.168.1.10"})

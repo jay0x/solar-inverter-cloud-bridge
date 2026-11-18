@@ -45,6 +45,13 @@ the release test and guards the installation builder against accidental calls.
 Compatibility-format tests still exercise diagnostic ZIP data in memory; those
 are evidence-format tests, not installation builds or distribution archives.
 
+Before committing runtime changes, run the same complete non-packaging checks as
+the Test candidate workflow: the offline command above, the HA integration target,
+`python3 tools/check_docs.py`, and `npm test --prefix tests`. Review `git diff --check`
+and the intended files before committing. A prior focused pass is not a full run
+of a subsequently changed candidate; only repeat unchanged checks when a failure
+or unresolved concern calls for it.
+
 ## Browser checks
 
 ```bash

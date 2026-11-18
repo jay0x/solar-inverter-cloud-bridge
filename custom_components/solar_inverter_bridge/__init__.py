@@ -64,6 +64,8 @@ async def async_setup_entry(hass, entry):
         bootstrap_preference=entry.options.get("bootstrap_preference", "auto"),
     )
     try:
+        from .core.artifact import artifact_metadata
+        service.incidents.build = await hass.async_add_executor_job(artifact_metadata)
         service.callback.configure(entry.options.get("collector_connections", {}))
         service.restore_issues(await hass.async_add_executor_job(storage.recent_diagnostics))
         await service.start(host="0.0.0.0", ports=PORTS)
@@ -126,7 +128,7 @@ async def _register_panel(hass):
     from homeassistant.components import frontend
 
     panel_path = Path(__file__).parent / "frontend" / "panel.js"
-    module_url = "/solar_inverter_bridge/panel.js?v=0.22.0"
+    module_url = "/solar_inverter_bridge/panel.js?v=0.24.0"
     state = hass.data.setdefault(DOMAIN, {})
     if not state.get("static_registered"):
         await hass.http.async_register_static_paths([

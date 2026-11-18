@@ -36,6 +36,7 @@ def async_register(hass):
     websocket_api.async_register_command(hass, ws_module_info)
     websocket_api.async_register_command(hass, ws_reset_collector)
     websocket_api.async_register_command(hass, ws_compatibility)
+    websocket_api.async_register_command(hass, ws_incidents)
     websocket_api.async_register_command(hass, ws_profile)
 
 
@@ -96,7 +97,7 @@ async def _connection_options(hass, msg):
     from .core.callback import options
     from .network_hints import async_network_hints
     config = options(msg["method"], msg["collector_ip"].strip(), msg["callback_host"].strip(), msg["callback_port"], msg["udp_port"])
-    if config["collector_ip"]:
+    if config["collector_ip"] and config["method"] != "redirect":
         hints = await async_network_hints(hass)
         if config["callback_host"] not in {x["address"] for x in hints["addresses"]}:
             raise ValueError("callback_host_not_local")
@@ -544,6 +545,71 @@ async def ws_reset_collector(hass, connection, msg):
         connection.send_error(msg["id"], "unknown_error", str(err))
         return
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "solar_inverter_bridge/incidents",
+    vol.Required("action"): vol.In(["status", "configure", "watch", "cancel_watch", "delete", "download", "feedback"]),
+    vol.Optional("device_id"): str,
+    vol.Optional("fingerprint"): vol.All(str, vol.Match(r"^sib-inc-v1-[0-9a-f]{24}$")),
+    vol.Optional("enabled"): bool,
+    vol.Optional("hours", default=4): vol.All(int, vol.Range(min=1, max=24)),
+    vol.Optional("include_raw", default=False): bool,
+    vol.Optional("metadata", default=dict): {str: str},
+    vol.Optional("feedback", default=list): [{
+        vol.Required("feature"): vol.All(str, vol.Length(min=1, max=96)),
+        vol.Required("result"): vol.In(["working", "not_working", "unknown"]),
+        vol.Optional("comment", default=""): vol.All(str, vol.Length(max=2000)),
+    }],
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_incidents(hass, connection, msg):
+    import base64
+    from .core.incidents import export_compatibility_feedback
+    entry = _runtime(hass)
+    if entry is None:
+        connection.send_error(msg["id"], "not_found", "bridge_not_loaded")
+        return
+    service = entry.runtime_data["service"]
+    recorder = service.incidents
+    device_id = msg.get("device_id")
+    action = msg["action"]
+    try:
+        if len(msg["metadata"]) > 10 or any(len(value) > 2000 for value in msg["metadata"].values()) or len(msg["feedback"]) > 64:
+            raise ValueError("incident_description_too_large")
+        if action in ("watch", "cancel_watch"):
+            if not device_id or await hass.async_add_executor_job(entry.runtime_data["storage"].device, device_id) is None:
+                raise ValueError("device_not_found")
+        if action == "configure":
+            if "enabled" not in msg:
+                raise ValueError("incident_enabled_required")
+            await recorder.configure(msg["enabled"])
+        elif action == "watch":
+            await recorder.arm(device_id, msg["hours"])
+        elif action == "cancel_watch":
+            await recorder.cancel_watch(device_id)
+        elif action in ("delete", "download"):
+            if "fingerprint" not in msg:
+                raise ValueError("incident_fingerprint_required")
+            if action == "delete":
+                await recorder.delete(msg["fingerprint"], device_id)
+            else:
+                data, analysis = await recorder.export(msg["fingerprint"], device_id=device_id,
+                                                       include_raw=msg["include_raw"], metadata=msg["metadata"])
+                connection.send_result(msg["id"], {"filename": f"incident-{msg['fingerprint']}.zip",
+                    "base64": base64.b64encode(data).decode(), "analysis": analysis})
+                return
+        elif action == "feedback":
+            if not msg["feedback"]:
+                raise ValueError("compatibility_feedback_required")
+            data, analysis = await export_compatibility_feedback(msg["feedback"], metadata=msg["metadata"], build=recorder.build)
+            connection.send_result(msg["id"], {"filename": "compatibility-feedback.zip",
+                "base64": base64.b64encode(data).decode(), "analysis": analysis})
+            return
+        connection.send_result(msg["id"], recorder.view(device_id))
+    except (ValueError, OSError, StorageError) as error:
+        connection.send_error(msg["id"], "incident_failed", str(error))
 
 
 @websocket_api.websocket_command({

@@ -8,7 +8,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import ServiceValidationError, Unauthorized
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -16,6 +16,196 @@ from custom_components.solar_inverter_bridge.core.observations import Observatio
 from custom_components.solar_inverter_bridge.core.telemetry import decode, required_addresses
 
 DOMAIN = "solar_inverter_bridge"
+
+
+@pytest.fixture
+async def settings_controls(hass, entry, observed_settings_session):
+    from homeassistant.helpers import entity_registry as er
+    storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
+    identifier = await hass.async_add_executor_job(storage.enroll, "freshness", "Freshness", "modbus_protocol_4")
+    service.settings[identifier] = {"primary_output_priority": "sub", "maximum_charging_current": 12.5,
+                                    "inverter_datetime": "2026-11-17T12:00:00"}
+    holder = observed_settings_session(service, identifier, "freshness")
+    service._notify()
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    entities = {key: registry.async_get_entity_id(domain, DOMAIN, f"{identifier}_setting_{key}") for key, domain in
+                (("primary_output_priority", "select"), ("maximum_charging_current", "number"),
+                 ("clock_sync", "switch"), ("auto_reset", "switch"))}
+    return identifier, holder, entities
+
+
+async def test_settings_status_and_native_agree_across_disconnect_reconnect_and_pause(
+        hass, entry, settings_controls, hass_admin_user, monkeypatch):
+    from homeassistant.helpers.entity_component import DATA_INSTANCES
+    identifier, holder, entities = settings_controls
+    storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
+    apply = AsyncMock()
+    monkeypatch.setattr(service, "apply", apply)
+    admin = Context(user_id=hass_admin_user.id)
+
+    async def check(available, reason=None):
+        service._notify()
+        await hass.async_block_till_done()
+        device = next(d for d in (await service.status())["devices"] if d["device_id"] == identifier)
+        native = hass.states.get(entities["primary_output_priority"])
+        entity = hass.data[DATA_INSTANCES]["select"].get_entity(entities["primary_output_priority"])
+        assert entity is not None
+        attributes = entity.extra_state_attributes
+        assert device["settings_available"] is available
+        assert (native.state != "unavailable") is available
+        assert entity.available is available
+        assert attributes["settings_current_session"] == device["settings_current_session"]
+        assert attributes["observation_freshness"]["available"] == device["parameter_freshness"]["primary_output_priority"]["available"]
+        assert attributes["blocked_reason"] == device["settings_blocked_reason"] == reason
+        if available:
+            assert native.attributes["settings_current_session"] == attributes["settings_current_session"]
+            assert native.attributes["blocked_reason"] is None
+        else:
+            # HA omits custom state attributes when an entity is unavailable.
+            assert "settings_current_session" not in native.attributes
+            assert "blocked_reason" not in native.attributes
+        return device
+
+    await check(True)
+    holder["closed"].set()
+    await check(False, "collector_not_connected")
+    replacement = {**holder, "closed": asyncio.Event()}
+    service.connections["freshness"] = replacement
+    await check(False, "settings_session_changed")
+    # HA filters unavailable targets before dispatch; the service call is a no-op.
+    await hass.services.async_call("select", "select_option", {
+        "entity_id": entities["primary_output_priority"], "option": "sbu"}, blocking=True, context=admin)
+    apply.assert_not_awaited()
+    assert hass.states.get(entities["primary_output_priority"]).state == "unavailable"
+    # The native handler must also refuse the stale baseline if called directly.
+    entity = hass.data[DATA_INSTANCES]["select"].get_entity(entities["primary_output_priority"])
+    assert entity is not None and not entity.available
+    entity.async_set_context(admin)
+    with pytest.raises(ServiceValidationError, match="settings_session_changed"):
+        await entity.async_select_option("sbu")
+    await hass.async_block_till_done()
+    apply.assert_not_awaited()
+    service._settings_sessions[identifier] = replacement
+    service._settings_observed[identifier] = monotonic()
+    await check(True)
+    await hass.async_add_executor_job(storage.set_collection, identifier, False, 10)
+    await check(False, "device_disabled")
+    replacement["profile_verified"] = False
+    replacement["dialect"] = "binary"
+    replacement["reader"].route_qualified = False
+    service._notify()
+    await hass.async_block_till_done()
+    # Saved maintenance preferences remain editable with paused/unsupported execution.
+    for key in ("clock_sync", "auto_reset"):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": entities[key]}, blocking=True, context=admin)
+        assert hass.states.get(entities[key]).state == "on"
+    device = await hass.async_add_executor_job(storage.device, identifier)
+    assert device["clock_sync"] and device["auto_reset"]
+
+
+async def test_settings_expiry_publishes_native_unavailability_after_telemetry_is_stale(
+        hass, entry, settings_controls, monkeypatch):
+    from unittest.mock import Mock
+    from homeassistant.helpers.entity_component import DATA_INSTANCES
+    from custom_components.solar_inverter_bridge.core import session
+    identifier, _, entities = settings_controls
+    service = entry.runtime_data["service"]
+    clock = Mock(return_value=1000)
+    monkeypatch.setattr(session, "monotonic", clock)
+    service._settings_observed[identifier] = 1000
+    service.observations[identifier] = Observation({}, 800)
+    notify = Mock(wraps=service.on_update)
+    service.on_update = notify
+    service._expire_observations()
+    await hass.async_block_till_done()
+    notify.reset_mock()
+    clock.return_value = 1090
+    service._expire_observations()
+    notify.assert_not_called()
+    clock.return_value = 1090.001
+    service._expire_observations()
+    await hass.async_block_till_done()
+    notify.assert_called_once()
+    state = hass.states.get(entities["primary_output_priority"])
+    assert state.state == "unavailable"
+    assert "blocked_reason" not in state.attributes
+    entity = hass.data[DATA_INSTANCES]["select"].get_entity(entities["primary_output_priority"])
+    assert entity is not None and not entity.available
+    attributes = entity.extra_state_attributes
+    assert attributes["blocked_reason"] == "settings_stale"
+    device = next(d for d in (await service.status())["devices"] if d["device_id"] == identifier)
+    assert not device["settings_available"] and device["stale"]
+    assert attributes["blocked_reason"] == device["settings_blocked_reason"]
+    assert attributes["observation_freshness"] == device["parameter_freshness"]["primary_output_priority"]
+    clock.return_value = 1100
+    service._expire_observations()
+    notify.assert_called_once()
+
+
+async def test_fresh_single_field_native_readback_does_not_refresh_group_or_other_fields(
+        hass, entry, settings_controls, monkeypatch):
+    from unittest.mock import Mock
+    from custom_components.solar_inverter_bridge.core import session
+    from custom_components.solar_inverter_bridge.core.parameters import FIELDS
+    identifier, holder, entities = settings_controls
+    service = entry.runtime_data["service"]
+    clock = Mock(return_value=1100)
+    monkeypatch.setattr(session, "monotonic", clock)
+    service._settings_observed[identifier] = 1000
+    field = next(field for field in FIELDS if field.key == "primary_output_priority")
+    service._remember_parameter(identifier, field, (2,), holder=holder)
+    service._expire_observations()
+    await hass.async_block_till_done()
+    device = next(d for d in (await service.status())["devices"] if d["device_id"] == identifier)
+    state = hass.states.get(entities[field.key])
+    assert state.state == "sbu"
+    assert state.attributes["observation_freshness"] == device["parameter_freshness"][field.key]
+    assert not state.attributes["settings_available"] and not device["settings_available"]
+    assert hass.states.get(entities["maximum_charging_current"]).state == "unavailable"
+    assert service._settings_observed[identifier] == 1000
+    assert device["settings"]["inverter_datetime"] == "2026-11-17T12:00:00"
+    clock.return_value = 1191
+    service._expire_observations()
+    await hass.async_block_till_done()
+    assert hass.states.get(entities[field.key]).state == "unavailable"
+
+
+async def test_native_unresolved_reason_is_loaded_off_event_loop(hass, entry, settings_controls, monkeypatch):
+    import threading
+    from homeassistant.helpers.entity_component import DATA_INSTANCES
+    identifier, _, entities = settings_controls
+    storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
+    original = storage.has_unresolved
+    event_thread = threading.get_ident()
+
+    def checked(device_id):
+        assert threading.get_ident() != event_thread
+        return original(device_id)
+
+    monkeypatch.setattr(storage, "has_unresolved", checked)
+    await hass.async_add_executor_job(storage.accept_operation, identifier, "pending-native", {"key": "primary_output_priority", "value": "sbu"})
+    await hass.async_add_executor_job(storage.claim_send, "pending-native")
+    service._notify()
+    await hass.async_block_till_done()
+    state = hass.states.get(entities["primary_output_priority"])
+    assert state.state == "unavailable"
+    assert "blocked_reason" not in state.attributes
+    assert "settings_available" not in state.attributes
+    entity = hass.data[DATA_INSTANCES]["select"].get_entity(entities["primary_output_priority"])
+    assert entity is not None and not entity.available
+    attributes = entity.extra_state_attributes
+    assert attributes["blocked_reason"] == "device_busy_or_unresolved"
+    assert attributes["settings_available"]
+    device = next(d for d in (await service.status())["devices"] if d["device_id"] == identifier)
+    assert device["unresolved"] == 1 and device["settings_available"]
+    assert attributes["observation_freshness"]["available"] == device["parameter_freshness"]["primary_output_priority"]["available"]
+    assert device["settings_blocked_reason"] is None
+    await hass.async_add_executor_job(lambda: storage.finish_operation(
+        "pending-native", state="completed", outcome="not_sent", unresolved=False, reason="fixture"))
+    service._notify()
+    await hass.async_block_till_done()
+    assert hass.states.get(entities["primary_output_priority"]).state == "sub"
 
 
 @pytest.fixture
@@ -133,7 +323,7 @@ async def test_existing_connection_edit_preserves_enrollment_and_pause_one_secon
     sender.assert_not_awaited()
 
 
-async def test_native_controls_share_executor_and_never_set_optimistic_values(hass, entry, hass_admin_user, monkeypatch):
+async def test_native_controls_share_executor_and_never_set_optimistic_values(hass, entry, hass_admin_user, monkeypatch, observed_settings_session):
     from unittest.mock import ANY
     from homeassistant.helpers import entity_registry as er
     runtime = entry.runtime_data
@@ -142,9 +332,7 @@ async def test_native_controls_share_executor_and_never_set_optimistic_values(ha
     await hass.async_add_executor_job(storage.set_mode, identifier, "advanced")
     service.settings[identifier] = {"primary_output_priority": "sub", "maximum_charging_current": 12.4,
                                     "secondary_charging_start": "07:00:00", "battery_recovery_voltage_ac": "full_recovery"}
-    service._settings_observed[identifier] = monotonic()
-    monkeypatch.setattr(service, "_connected", lambda holder: True)
-    monkeypatch.setattr(service, "transport_capabilities", lambda device: {"inverter_write": True})
+    observed_settings_session(service, identifier, "native-control")
     service._notify()
     await hass.async_block_till_done()
     entities = er.async_get(hass)
@@ -179,17 +367,15 @@ async def test_native_controls_share_executor_and_never_set_optimistic_values(ha
     assert hass.states.get(number_id).state == "unavailable"
 
 
-async def test_binary_capabilities_override_saved_advanced_mode_in_native_entities(hass, entry, monkeypatch):
+async def test_binary_capabilities_override_saved_advanced_mode_in_native_entities(hass, entry, monkeypatch, observed_settings_session):
     import asyncio
     from homeassistant.helpers import entity_registry as er
     from custom_components.solar_inverter_bridge.core.transport import BINARY_CAPABILITIES
     storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
     identifier = await hass.async_add_executor_job(storage.enroll, "binary-policy", "Binary", "modbus_protocol_4")
     await hass.async_add_executor_job(storage.set_mode, identifier, "advanced")
-    service.connections["binary-policy"] = {"capabilities": BINARY_CAPABILITIES, "closed": asyncio.Event(), "lock":asyncio.Lock()}
+    observed_settings_session(service, identifier, "binary-policy", dialect="binary", verified=False)
     service.settings[identifier] = {"primary_output_priority": "sub"}
-    service._settings_observed[identifier] = monotonic()
-    monkeypatch.setattr(service, "_connected", lambda holder: True)
     service._notify()
     await hass.async_block_till_done()
     registry = er.async_get(hass)
@@ -263,16 +449,16 @@ async def test_inferred_profile_has_its_own_entities_inventory_and_explicit_cont
     assert not (await reader.receive_json())["success"]
 
 
-async def test_pi18_supported_values_use_engineering_units(hass,entry,monkeypatch):
-    from types import SimpleNamespace
+async def test_pi18_supported_values_use_engineering_units(hass,entry,monkeypatch,observed_settings_session):
     from homeassistant.helpers import entity_registry as er
     storage,service=entry.runtime_data["storage"],entry.runtime_data["service"]
     identifier=await hass.async_add_executor_job(storage.enroll,"pi18-choices","Choices","pi18")
-    service.connections["pi18-choices"]={"reader":SimpleNamespace(setting_choices={"9110":[440,450,460]}),"closed":asyncio.Event()}
+    holder=observed_settings_session(service,identifier,"pi18-choices")
+    holder["reader"].setting_choices={"9110":[440,450,460]}
     service.settings[identifier]={"battery_recovery_voltage_ac":46}
-    service._settings_observed[identifier]=monotonic()
-    monkeypatch.setattr(service,"_connected",lambda holder:True)
-    monkeypatch.setattr(service,"transport_capabilities",lambda device:{"inverter_write":True})
+    acceptance={"profile_id":"pi18","fingerprint":"f"*64,"binding":{"transport":"at"}}
+    await hass.async_add_executor_job(storage.accept_profile,identifier,acceptance)
+    service.profile_acceptances[identifier]=acceptance
     service._notify();await hass.async_block_till_done()
     entity_id=er.async_get(hass).async_get_entity_id("number",DOMAIN,f"{identifier}_setting_battery_recovery_voltage_ac")
     assert hass.states.get(entity_id).attributes["supported_values"]==[44,45,46]
@@ -300,14 +486,12 @@ async def test_pi30_variant_renewal_preserves_registry_and_refreshes_capabilitie
     assert service.transmitted==0
 
 
-async def test_native_control_permissions_and_recovery_preference_persist(hass, entry, hass_admin_user, hass_read_only_user, monkeypatch):
+async def test_native_control_permissions_and_recovery_preference_persist(hass, entry, hass_admin_user, hass_read_only_user, monkeypatch, observed_settings_session):
     from homeassistant.helpers import entity_registry as er
     storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
     identifier = await hass.async_add_executor_job(storage.enroll, "native-policy", "Policy", "modbus_protocol_4")
     service.settings[identifier] = {"primary_output_priority": "sub"}
-    service._settings_observed[identifier] = monotonic()
-    monkeypatch.setattr(service, "_connected", lambda holder: True)
-    monkeypatch.setattr(service, "transport_capabilities", lambda device: {"inverter_write": True})
+    observed_settings_session(service, identifier, "native-policy")
     service._notify()
     await hass.async_block_till_done()
     entities = er.async_get(hass)
@@ -329,16 +513,14 @@ async def test_native_control_permissions_and_recovery_preference_persist(hass, 
     assert (await hass.async_add_executor_job(entry.runtime_data["storage"].device, identifier))["control_mode"] == "full"
 
 
-async def test_native_controls_default_full_and_legacy_selector_is_retired(hass, entry, hass_admin_user, hass_ws_client, monkeypatch):
+async def test_native_controls_default_full_and_legacy_selector_is_retired(hass, entry, hass_admin_user, hass_ws_client, monkeypatch, observed_settings_session):
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers.entity import EntityCategory
     runtime = entry.runtime_data
     storage, service = runtime["storage"], runtime["service"]
     identifier = await hass.async_add_executor_job(storage.enroll, "mode-visibility", "Modes", "modbus_protocol_4")
     service.settings[identifier] = {"primary_output_priority": "sub", "maximum_charging_current": 12.4, "secondary_charging_start": "07:00:00"}
-    service._settings_observed[identifier] = monotonic()
-    monkeypatch.setattr(service, "_connected", lambda holder: True)
-    monkeypatch.setattr(service, "transport_capabilities", lambda device: {"inverter_write": True})
+    observed_settings_session(service, identifier, "mode-visibility")
     service._notify()
     await hass.async_block_till_done()
     registry = er.async_get(hass)
@@ -600,6 +782,78 @@ async def test_missing_enrollment_does_not_imply_registry_deletion(hass, entry):
     assert entities.async_get(entity.entity_id) is not None
 
 
+async def test_incident_watch_export_feedback_and_restart_are_passive(hass, entry, hass_ws_client, hass_read_only_access_token):
+    import base64
+    import json
+    from custom_components.solar_inverter_bridge.core.compatibility import validate_package
+    storage, service = entry.runtime_data["storage"], entry.runtime_data["service"]
+    identifier = await hass.async_add_executor_job(storage.enroll, "incident-private-collector", "Private", "modbus_protocol_4")
+    await hass.async_add_executor_job(storage.set_collection, identifier, False, 10)
+    service._incident_devices[identifier] = await hass.async_add_executor_job(storage.device, identifier)
+    client = await hass_ws_client(hass)
+    async def request(action, **values):
+        await client.send_json_auto_id({"type": DOMAIN + "/incidents", "action": action, **values})
+        result = await client.receive_json()
+        assert result["success"], result
+        return result["result"]
+    readonly = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    await readonly.send_json_auto_id({"type": DOMAIN + "/incidents", "action": "watch", "device_id": identifier, "hours": 4})
+    assert not (await readonly.receive_json())["success"]
+    assert not service.incidents.view(identifier)["watch"]["active"]
+    watched = await request("watch", device_id=identifier, hours=4)
+    assert watched["watch"]["active"]
+    service.incidents.observe("dialect_selected", session="secret-session", device_id=identifier, dialect="binary")
+    secret = b"PRIVATE-WIRE-CONTENT"
+    service.incidents.observe("wire", session="secret-session", device_id=identifier, direction="rx", data=secret)
+    service._incident_last_context[identifier] = {"session": "secret-session", "transport": "binary"}
+    for _ in range(2):
+        error = ValueError("unexpected_byte_count")
+        error.register_address, error.register_count, error.function = 184, 1, 3
+        await service.record_issue(error, identifier, "poll")
+    view = await request("status", device_id=identifier)
+    assert len(view["incidents"]) == 1 and view["incidents"][0]["count"] == 2
+    assert view["watch"]["status"] == "captured"
+    fingerprint = view["incidents"][0]["fingerprint"]
+    for raw in (False, True):
+        downloaded = await request("download", device_id=identifier, fingerprint=fingerprint, include_raw=raw)
+        report = validate_package(base64.b64decode(downloaded["base64"]))
+        assert report["raw_protocol_included"] is raw
+        assert (secret.hex() in json.dumps(report)) is raw
+        assert identifier not in json.dumps(report)
+        assert downloaded["analysis"]["incident"]["count"] == 2
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    restored = await request("status", device_id=identifier)
+    assert restored["incidents"][0]["fingerprint"] == fingerprint
+    assert restored["incidents"][0]["count"] == 2
+    assert restored["watch"]["status"] == "captured"
+    feedback = await request("feedback", device_id=identifier,
+        metadata={"inverter_model": "Synthetic"}, feedback=[{"feature": "telemetry", "result": "working", "comment": "Compared display"}])
+    report = validate_package(base64.b64decode(feedback["base64"]))
+    assert report["context"]["evidence"] == "user_reported" and not report["events"]
+    assert not report["raw_protocol_included"]
+    deleted = await request("delete", device_id=identifier, fingerprint=fingerprint)
+    assert deleted["incidents"] == []
+    new_service = entry.runtime_data["service"]
+    assert service.transmitted == new_service.transmitted == 0
+    assert not (await hass.async_add_executor_job(entry.runtime_data["storage"].device, identifier))["enabled"]
+
+
+async def test_incident_api_rejects_invalid_watch_and_readonly_exports(hass, entry, hass_ws_client, hass_read_only_access_token):
+    client = await hass_ws_client(hass)
+    readonly = await hass_ws_client(hass, access_token=hass_read_only_access_token)
+    for action in ("status", "configure", "watch", "cancel_watch", "delete", "download", "feedback"):
+        await readonly.send_json_auto_id({"type": DOMAIN + "/incidents", "action": action})
+        assert not (await readonly.receive_json())["success"]
+    for values in ({"action": "watch", "device_id": "missing", "hours": 1},
+                   {"action": "watch", "hours": 25}, {"action": "configure"},
+                   {"action": "download"}, {"action": "feedback", "feedback": []}):
+        await client.send_json_auto_id({"type": DOMAIN + "/incidents", **values})
+        assert not (await client.receive_json())["success"]
+    assert entry.runtime_data["service"].incidents.view()["incidents"] == []
+    assert entry.runtime_data["service"].transmitted == 0
+
+
 async def test_diagnostics_contains_real_context_and_redacts_identifiers(hass, entry):
     import json
     from types import SimpleNamespace
@@ -608,6 +862,8 @@ async def test_diagnostics_contains_real_context_and_redacts_identifiers(hass, e
     runtime = entry.runtime_data
     service = runtime["service"]
     identifier = await hass.async_add_executor_job(runtime["storage"].enroll, "private-collector", "Private house name", "modbus_protocol_4")
+    await hass.async_add_executor_job(runtime["storage"].set_collection, identifier, True, 300)
+    await hass.async_add_executor_job(runtime["storage"].enroll, "other-private-collector", "Other house name", "must_pv3300")
     service.observations[identifier] = Observation(decode({address: 0 for address in required_addresses()} | {201: 2, 277: 480, 280: 55, 302: 1234}), monotonic())
     service.settings[identifier] = {"primary_output_priority": "sbu", "battery_protection_soc_ac": 20}
     service.settings_registers[identifier] = {601: 2, 647: 20}
@@ -618,12 +874,20 @@ async def test_diagnostics_contains_real_context_and_redacts_identifiers(hass, e
     await hass.async_block_till_done()
     error = FrameError("crc_mismatch")
     error.register_address, error.register_count, error.function = 630, 26, 3
+    error.payload_hex = "01030200017984"
     await service.record_issue(error, identifier, "settings_read")
     await service.record_issue(ValueError("secret_token=do-not-export-this"), identifier, "command")
     captured_at = service.last_error_at
     report = await async_get_config_entry_diagnostics(hass, entry)
     assert report["schema"] == 2
     assert len(report["parameter_inventory"]) == 51
+    assert report["parameter_inventory_profile"] == "modbus_protocol_4"
+    assert report["policy"]["telemetry_grace_seconds"] == 60
+    assert report["policy"]["clock_readback_tolerance_seconds"] == 3
+    assert report["devices"][0]["telemetry"]["ttl_seconds"] == 360
+    assert report["devices"][0]["parameters"]["ttl_seconds"] == 1500
+    assert report["devices"][0]["configuration"]["auto_reset"] is False
+    assert report["devices"][1]["parameter_inventory"] != report["parameter_inventory"]
     assert report["devices"][0]["parameters"]["values"]["primary_output_priority"] == "sbu"
     assert report["devices"][0]["parameters"]["raw_register_values"]["primary_output_priority"] == [2]
     assert report["devices"][0]["telemetry"]["values"]["pv_power"]["value"] == 1234
@@ -633,7 +897,7 @@ async def test_diagnostics_contains_real_context_and_redacts_identifiers(hass, e
     assert report["recent_issues"][0]["occurred_at"]
     assert report["artifact"]["sha256"]
     encoded = json.dumps(report)
-    for private in (identifier, "private-collector", "Private house name", "192.168.99.123", "do-not-export-this"):
+    for private in (identifier, "private-collector", "Private house name", "Other house name", "192.168.99.123", "do-not-export-this", error.payload_hex, "payload_hex"):
         assert private not in encoded
     assert service.transmitted == 0
     assert await hass.config_entries.async_reload(entry.entry_id)

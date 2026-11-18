@@ -31,7 +31,9 @@ def options(method="auto", collector_ip="", callback_host="", callback_port=8899
     if method not in ("auto", "callback", "redirect"):
         raise ValueError("invalid_connection_method")
     ip = local_ip(collector_ip) if collector_ip else ""
-    if not ip and method != "callback":
+    if not ip:
+        if method == "callback":
+            raise ValueError("invalid_callback_address")
         return {"method": method, "collector_ip": ""}
     if type(callback_port) is not int or not 1024 <= callback_port <= 65535 or callback_port in (18899, 38899):
         raise ValueError("invalid_callback_port")
@@ -79,11 +81,19 @@ class CallbackConnections:
         if device_id in self.switching:
             return False
         config = self.saved.get(device_id)
-        if not config or config["method"] == "auto":
+        return not config or self._route_matches(holder, config)
+
+    def _route_matches(self, holder, config):
+        if config["method"] == "auto":
             return True
         if config["method"] == "redirect":
             return holder["listener_port"] not in self.ports
         return holder["listener_port"] == config["callback_port"] and holder["source"] == config["collector_ip"]
+
+    def _prune_requests(self):
+        now = monotonic()
+        self.requests = {key: record for key, record in self.requests.items()
+                         if now < record.get("retain_until", record["expires"])}
 
     def live(self, holder):
         return (not self.service._closing and not holder["closed"].is_set()
@@ -120,18 +130,19 @@ class CallbackConnections:
                 raise ValueError("device_not_found")
             identity = device["collector_sha256"]
             self.identities[identity] = device_id
+            self._prune_requests()
             previous = self.requests.get(request_id)
             if previous:
                 if (previous["config"] != config or previous["device_id"] != device_id
                         or self.saved.get(device_id) != config):
                     raise ValueError("connection_request_conflict")
                 return self.view(previous)
-            if config["collector_ip"] and not peer_allowed(config["collector_ip"], service.sources):
-                raise ValueError("callback_source_not_allowed")
-            if any(self.live(h) and h["source"] == config["collector_ip"] and key != identity
-                   for key, channels in service._channels.items() for h in channels):
-                raise ValueError("callback_identity_mismatch")
-            self.requests = {key: r for key, r in self.requests.items() if monotonic() < r["expires"]}
+            if config["method"] != "redirect":
+                if config["collector_ip"] and not peer_allowed(config["collector_ip"], service.sources):
+                    raise ValueError("callback_source_not_allowed")
+                if any(self.live(h) and h["source"] == config["collector_ip"] and key != identity
+                       for key, channels in service._channels.items() for h in channels):
+                    raise ValueError("callback_identity_mismatch")
             if len(self.requests) >= 32:
                 raise ValueError("connection_request_capacity")
             job = service._profile_jobs.get(identity)
@@ -160,7 +171,7 @@ class CallbackConnections:
                         if old is not None:
                             await stack.enter_async_context(old["lock"])
                         await stack.enter_async_context(self.lock)
-                        if config["collector_ip"]:
+                        if config["collector_ip"] and config["method"] != "redirect":
                             await self.ensure_listener(config)
                         # No await between saving the preference and releasing
                         # the old owner. Old sockets stay heartbeat-only.
@@ -190,7 +201,7 @@ class CallbackConnections:
                         self.next_attempt.pop(device_id, None)
                         record = {"request_id": request_id, "config": config, "expected_identity": identity,
                                   "request_identity": identity, "device_id": device_id, "state": "saved_paused",
-                                  "sent": False, "expires": monotonic() + 600}
+                                  "sent": False, "expires": monotonic() + 600, "retain_until": monotonic() + 600}
                         self.requests[request_id] = record
                         return self.view(record)
                     try:
@@ -216,8 +227,7 @@ class CallbackConnections:
         if state != "waiting_for_connection" and monotonic() >= record["expires"]:
             state = "timed_out"
         elif state == "connected" and not any(self.service._connected(h) and
-                (not record["config"].get("callback_port") or h["listener_port"] == record["config"]["callback_port"]
-                 or record["config"]["method"] == "auto")
+                self._route_matches(h, record["config"])
                 for h in holders):
             state = "disconnected"
         return {"request_id": record["request_id"], "state": state,
@@ -225,25 +235,33 @@ class CallbackConnections:
                 "collector_sha256": record.get("collector_sha256"), "reason": record.get("reason"),
                  "callback_port": record["config"].get("callback_port"), "device_id": record["device_id"], "sent": record["sent"]}
 
-    async def connect(self, request_id, config, *, expected_identity=None, device_id=None):
+    async def connect(self, request_id, config, *, expected_identity=None, device_id=None, _automatic=False):
         uuid.UUID(request_id)
         config = options(**config)
         async with self.lock:
             if self.service._closing:
                 raise ConnectionError("bridge_stopping")
+            self._prune_requests()
             if request_id in self.requests:
                 record = self.requests[request_id]
                 if record["config"] != config or record["request_identity"] != expected_identity:
                     raise ValueError("connection_request_conflict")
                 return self.view(record)
-            self.requests = {key: value for key, value in self.requests.items() if monotonic() < value["expires"]}
+            if _automatic:
+                # Only retire this device's completed/expired automatic attempt.
+                # Manual IDs retain their result; live waiters are never evicted.
+                self.requests = {key: record for key, record in self.requests.items()
+                                 if not (record.get("automatic") and record["device_id"] == device_id
+                                         and record["request_identity"] == expected_identity
+                                         and (record["state"] != "waiting" or monotonic() >= record["expires"]))}
             if len(self.requests) >= 32:
                 raise ValueError("connection_request_capacity")
             ip = config["collector_ip"]
-            if ip and not peer_allowed(ip, self.service.sources):
+            if config["method"] != "redirect" and ip and not peer_allowed(ip, self.service.sources):
                 raise ValueError("callback_source_not_allowed")
             record = {"request_id": request_id, "config": config, "expected_identity": expected_identity, "request_identity": expected_identity,
-                      "device_id": device_id, "state": "waiting", "sent": False, "expires": monotonic() + 120}
+                      "device_id": device_id, "state": "waiting", "sent": False, "expires": monotonic() + 120,
+                      "retain_until": monotonic() + 600, "automatic": _automatic}
             if config["method"] == "redirect" or not ip:
                 holder = self.service.connections.get(expected_identity)
                 record["state"] = "connected" if self.service._connected(holder) else "waiting_for_connection"
@@ -261,7 +279,8 @@ class CallbackConnections:
                 record.update(state="connected", collector_sha256=holder["identity_sha256"], expires=monotonic() + 600)
                 self.requests[request_id] = record
                 return self.view(record)
-            if any(r["config"]["collector_ip"] == ip and r["state"] == "waiting" for r in self.requests.values()):
+            if any(r["config"]["collector_ip"] == ip and r["state"] == "waiting" and monotonic() < r["expires"]
+                   for r in self.requests.values()):
                 raise ValueError("callback_already_pending")
             port = config["callback_port"]
             await self.ensure_listener(config)
@@ -280,6 +299,7 @@ class CallbackConnections:
         if port not in self.ports:
             return True
         matching = [r for r in self.requests.values() if r["config"]["collector_ip"] == source
+                    and r["config"]["method"] != "redirect"
                     and r["config"].get("callback_port") == port and monotonic() < r["expires"]
                     and r["state"] in ("waiting", "connected")]
         if not matching:
@@ -291,16 +311,23 @@ class CallbackConnections:
                 if record["device_id"]:
                     self.blocked.add(record["device_id"])
             else:
-                record.update(state="connected", collector_sha256=identity, expires=monotonic() + 600)
+                if record["state"] == "waiting":
+                    record.update(expires=monotonic() + 600, retain_until=monotonic() + 600)
+                record.update(state="connected", collector_sha256=identity)
                 valid = True
         return valid
 
     def enrollment_options(self, request_id, identity):
         record = self.requests.get(request_id)
-        if record is None or (record["config"]["collector_ip"] and monotonic() >= record["expires"]):
+        if record is None:
             raise ValueError("connection_request_expired")
-        if record["config"]["collector_ip"] and (record.get("collector_sha256") != identity or record["state"] != "connected"):
-            raise ValueError("callback_identity_mismatch")
+        # Redirect IPs are saved hints. The selected TCP candidate's full PN and
+        # native verification are checked by service.enroll(), as without an IP.
+        if record["config"]["method"] != "redirect" and record["config"]["collector_ip"]:
+            if monotonic() >= record["expires"]:
+                raise ValueError("connection_request_expired")
+            if record.get("collector_sha256") != identity or record["state"] != "connected":
+                raise ValueError("callback_identity_mismatch")
         return dict(record["config"])
 
     def bind(self, request_id, device_id, identity):
@@ -319,6 +346,7 @@ class CallbackConnections:
             return
         self.next_attempt[device["device_id"]] = monotonic() + 120
         try:
-            await self.connect(str(uuid.uuid4()), config, expected_identity=device["collector_sha256"], device_id=device["device_id"])
+            await self.connect(str(uuid.uuid4()), config, expected_identity=device["collector_sha256"],
+                               device_id=device["device_id"], _automatic=True)
         except (ValueError, OSError) as error:
             await self.service.record_issue(error, device["device_id"], "callback")

@@ -8,6 +8,7 @@ import threading
 import uuid
 
 from .policy import normalize_mode
+from .incident_store import IncidentStoreMixin
 
 
 class StorageError(RuntimeError):
@@ -31,7 +32,7 @@ def _same_diagnostic(saved, record):
     return all(saved.get(key) == record.get(key) for key in keys)
 
 
-class Storage:
+class Storage(IncidentStoreMixin):
     def __init__(self, path, *, max_operations=100000, max_devices=16):
         self.path = str(path)
         self.max_operations = max_operations
@@ -127,6 +128,7 @@ class Storage:
             CREATE TABLE IF NOT EXISTS device_routes (device_id TEXT PRIMARY KEY, route TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS profile_acceptances (device_id TEXT PRIMARY KEY, record TEXT NOT NULL);
         """)
+        self._incident_schema()
         if "policy_revision" not in {row[1] for row in self.db.execute("PRAGMA table_info(devices)")}:
             self.db.execute("ALTER TABLE devices ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 0")
             self.db.commit()
@@ -255,7 +257,11 @@ class Storage:
         import asyncio
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        with self._admit:
+        # A synchronous caller can hold admission while waiting for queue space.
+        # The event loop must reject contention rather than wait for that thread.
+        if not self._admit.acquire(blocking=False):
+            raise StorageError("storage_busy")
+        try:
             if self.closed:
                 raise StorageError("storage_closed")
             if self.backup_active:
@@ -264,6 +270,8 @@ class Storage:
                 self.queue.put_nowait((function, None, None, loop, future))
             except queue.Full as error:
                 raise StorageError("storage_busy") from error
+        finally:
+            self._admit.release()
         return await future
 
     def _freeze_unsent_for_backup(self):

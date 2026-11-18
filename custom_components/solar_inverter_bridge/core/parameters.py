@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from .policy import CLOCK_READBACK_TOLERANCE_SECONDS
+
 
 READ_ONLY = {605, 636}
 OUTPUT = {1: "sub", 2: "sbu", 3: "suf"}
@@ -199,7 +201,8 @@ def readback_matches(field, desired_words, observed_words, record, poll_interval
             return False
         expected = datetime(*desired_words) + timedelta(seconds=elapsed)
         observed = datetime(*observed_words)
-        return abs((observed - expected).total_seconds()) <= max(3, 3 * poll_interval)
+        # Keep poll_interval in the call signature for existing callers only.
+        return abs((observed - expected).total_seconds()) <= CLOCK_READBACK_TOLERANCE_SECONDS
     except (TypeError, ValueError, OverflowError):
         return False
 

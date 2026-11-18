@@ -23,13 +23,18 @@ separate card, frontend plugin or framework build. Product strings are en-US.
   Numeric formatting and reordered/duplicate source entries do not create false changes.
 - Show the selected profile's full implemented inventory. Explain freshness and
   capability restrictions without inventing unsupported fields or control modes.
+- Distinguish hardware-unverified implementations from missing wire commands. The
+  Configuration view offers report collection without an extra control-mode gate.
+  Current per-field readback freshness can keep one editor usable without labeling
+  the entire settings group current. Binary reset is described as unimplemented,
+  not as a proven hardware limitation.
 - Profile acceptance covers its readings and implemented writable settings. A changed
   binding offers a fresh read-only recheck and reviewed proposal.
 - Treat names, descriptions and reports as text, not trusted HTML.
 
 ## Profile composition
 
-Panel 0.22.0 consumes the backend `profile_layers` description. Recognition,
+Panel 0.24.0 consumes the backend `profile_layers` description. Recognition,
 enrollment review, Configuration, Connection and catalog details show the common
 map separately from a required model extension and qualification evidence. A common-only candidate
 uses **Use common map** without requiring an exact model name. Required corrections
@@ -91,6 +96,19 @@ width and a 24 px gap at desktop and mobile sizes. Router/DNS instructions and r
 tools use disclosures; their open state survives status refresh. Focused inputs retain
 their existing refresh protection, while a focused help summary does not stop new
 connections from appearing. The home page's technical tools are collapsed initially.
+
+## Incident reports and compatibility feedback
+
+Activity and the compatibility tools expose the local incident recorder for enrolled
+and bridge-level failures. Known recovered events remain counters/cards, not automatic
+notifications. Unknown/unrecovered cards show available evidence and manual support
+actions. Watch does not resume polling or change a collector connection.
+
+Incident metadata drafts are scoped separately from user compatibility feedback.
+Raw export is an explicit one-shot choice, reset on export or reload. GitHub links
+are restricted to this repository's HTTPS issue paths; data/metadata are rendered as
+text. Search and clipboard/download actions are user initiated. A feedback result
+is user-reported evidence for its selected feature, not blanket model qualification.
 
 ## Network guidance
 

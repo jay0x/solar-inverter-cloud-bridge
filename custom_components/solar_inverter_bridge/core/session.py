@@ -55,6 +55,8 @@ class CollectorService:
         self._polling = {}
         self._settings_observed = {}
         self._settings_sessions = {}
+        self._parameter_observations = {}
+        self._settings_availability = {}
         self.settings_refresh_interval = 30
         self.settings_observed_at = {}
         self.native_identity = {}
@@ -65,6 +67,10 @@ class CollectorService:
         self._bootstrap_attempts = {}
         from .compatibility import CompatibilityCapture
         self.compatibility = CompatibilityCapture()
+        from .incidents import IncidentRecorder
+        self.incidents = IncidentRecorder(storage, on_update=self._notify)
+        self._incident_devices = {}
+        self._incident_last_context = {}
         self._source_salt = uuid.uuid4().bytes
         self._compatibility_tasks = set()
         self.profile_searches = {}
@@ -105,6 +111,20 @@ class CollectorService:
             self.last_error = self.issues[-1]["code"]
             self.last_error_at = self.issues[-1]["occurred_at"]
 
+    def _incident_context(self, device_id=None, holder=None):
+        context = dict(self._incident_last_context.get(device_id, {}))
+        device = self._incident_devices.get(device_id, {})
+        if holder is None and device:
+            holder = self.connections.get(device["collector_sha256"])
+        context.update(device_id=device_id, profile_id=device.get("profile_id", context.get("profile_id", "unknown")))
+        if holder is not None:
+            context.update(transport=holder.get("dialect", "unknown"), session=holder.get("session_ref"))
+            module = self.module_info.get(holder.get("identity_sha256")) or {}
+            context.update(firmware=module.get("firmware_version"), collector_model=module.get("module_type"))
+        if device_id in self.native_identity:
+            context["model_code"] = self.native_identity[device_id].get("model_code")
+        return context
+
     async def record_issue(self, error, device_id=None, stage="runtime", parameter=None):
         if device_id is not None and stage in ("poll", "settings_read"):
             self.poll_errors[device_id] += 1
@@ -122,6 +142,8 @@ class CollectorService:
         payload_hex = getattr(error, "payload_hex", None)
         if isinstance(payload_hex, str) and re.fullmatch(r"[0-9a-f]{2,64}", payload_hex):
             record["payload_hex"] = payload_hex
+        if code not in ("clock_correction_not_required", "automatic_collector_reset_attempted", "storage_backup_in_progress"):
+            self.incidents.record_issue(record, self._incident_context(device_id))
         persisted = record
         if self.storage is not None:
             try:
@@ -293,8 +315,10 @@ class CollectorService:
     async def start(self, host="127.0.0.1", ports=(0,)):
         self._listen_host = host
         if self.storage is not None:
-            self.callback.identities = {d["collector_sha256"]: d["device_id"]
-                                        for d in await asyncio.to_thread(self.storage.list_devices)}
+            devices = await asyncio.to_thread(self.storage.list_devices)
+            self.callback.identities = {d["collector_sha256"]: d["device_id"] for d in devices}
+            self._incident_devices = {d["device_id"]: d for d in devices}
+        await self.incidents.start()
         try:
             for port in ports:
                 state = {"requested_port": port, "bound": False}
@@ -340,6 +364,12 @@ class CollectorService:
         for server in self.servers:
             await server.wait_closed()
         self.servers.clear()
+        try:
+            await self.incidents.close()
+        except Exception as error:
+            # Diagnostics must not prevent network/storage shutdown.
+            import logging
+            logging.getLogger(__name__).warning("Incident flush during shutdown failed: %s", type(error).__name__)
 
     async def _accept(self, reader, writer):
         if self._closing or len(self.tasks) >= 80:
@@ -353,11 +383,25 @@ class CollectorService:
         session_ref = str(uuid.uuid4())
         port = writer.get_extra_info("sockname")[1]
         source_ref = "source_" + hashlib.sha256(self._source_salt + address.encode()).hexdigest()[:12]
+        incident_identity = None
+        incident_dialect = "unknown"
 
         def emit(kind, **fields):
             if kind == "wire" and fields.get("direction") == "tx":
                 self.transmitted += len(fields.get("data", b""))
             self.compatibility.emit(kind, session=session_ref, listener_port=port, source_ref=source_ref, **fields)
+            device_id = self.callback.identities.get(incident_identity)
+            context = self._incident_context(device_id)
+            context.update(session=session_ref, transport=incident_dialect)
+            if device_id:
+                self._incident_last_context[device_id] = context
+            self.incidents.observe(kind, session=session_ref, device_id=device_id, listener_port=port, source_ref=source_ref, **fields)
+            if kind in ("empty_inverter_reply", "wrong_route", "unexpected_function", "inner_payload_rejected"):
+                record = {"code": kind, "stage": "transport", **{k: v for k, v in fields.items()
+                          if k in ("function", "register_address", "register_count", "exception_code", "payload_length", "payload_kind")}}
+                self.incidents.record_issue(record, context)
+            elif kind in ("admission_failed", "binary_reader_failed"):
+                self.incidents.record_issue({"code": fields.get("code", kind), "stage": "admission"}, context)
 
         emit("tcp_received")
         try:
@@ -388,6 +432,7 @@ class CollectorService:
                 hint = "at" if hint == "binary" else "binary"
             async with asyncio.timeout(15):
                 dialect, basis = await detect(wire, self.bootstrap_preference, hint)
+                incident_dialect = dialect
                 if basis == "silent_bootstrap_hint":
                     if len(attempts) >= 2:
                         emit("bootstrap_exhausted", shared_source_ambiguity=True)
@@ -399,6 +444,7 @@ class CollectorService:
                 emit("dialect_selected", dialect=dialect, basis=basis)
                 transport = BinaryTransport(wire, callback_connection=port in self.callback.ports) if dialect == "binary" else wire
                 identity = await transport.identify()
+                incident_identity = identity["identity_sha256"]
                 emit("identity_confirmed", identity_method=identity["identity_method"], identity_length=identity["identity_length"],
                      collector_ref="collector_" + hashlib.sha256(self._source_salt + identity["identity_sha256"].encode()).hexdigest()[:12])
             self._bootstrap_attempts.pop(attempt_key, None)
@@ -486,6 +532,8 @@ class CollectorService:
         from .exchange import read_snapshot
         from .observations import Observation
         async with holder["lock"]:
+            if not self._connected(holder) or not self.callback.owner_allowed(holder):
+                raise ConnectionError("collector_session_changed")
             wire = getattr(holder["reader"], "wire", holder["reader"])
             wire.origin = "diagnostic_probe"
             holder.update(ready=False, snapshots=0)
@@ -730,11 +778,64 @@ class CollectorService:
         from .observations import telemetry_ttl
         return telemetry_ttl(self._poll_intervals.get(device_id))
 
+    @staticmethod
+    def settings_ttl(poll_interval):
+        return max(90, 5 * poll_interval)
+
+    def _settings_sample(self, holder, stamp, ttl, now):
+        current = holder is not None and self._connected(holder)
+        age = None if stamp is None else now - stamp
+        fresh = bool(current and holder.get("profile_verified") and not holder.get("profile_change_required")
+                     and age is not None and 0 <= age <= ttl)
+        return current, fresh, age
+
+    def settings_freshness(self, device, key=None, *, now=None):
+        """Cached evidence only: full groups and individual readbacks keep separate ages."""
+        device_id = device["device_id"]
+        now = monotonic() if now is None else now
+        ttl = self.settings_ttl(device["poll_interval"])
+        holder = self._settings_sessions.get(device_id)
+        stamp = self._settings_observed.get(device_id)
+        source = "settings_group"
+        if key is not None and key in self._parameter_observations.get(device_id, {}):
+            holder, stamp = self._parameter_observations[device_id][key]
+            source = "parameter_readback"
+        current, fresh, age = self._settings_sample(holder, stamp, ttl, now)
+        active = self.connections.get(device["collector_sha256"])
+        current = current and holder is active
+        if not device["enabled"]:
+            reason = "device_disabled"
+        elif not self._connected(active):
+            reason = "collector_not_connected"
+        elif active.get("profile_change_required") or not active.get("profile_verified"):
+            reason = "profile_not_verified"
+        elif stamp is None:
+            reason = "settings_not_observed"
+        elif not current:
+            reason = "settings_session_changed"
+        elif not fresh:
+            reason = "settings_stale"
+        elif key is not None and self.settings.get(device_id, {}).get(key) is None:
+            reason = "parameter_not_observed"
+        else:
+            reason = None
+        return {"available": reason is None, "current_session": current,
+                "age_seconds": None if age is None else round(max(0, age), 1),
+                "ttl_seconds": ttl, "source": source, "blocked_reason": reason}
+
     def _expire_observations(self):
         now = monotonic()
         availability = {key: observation.available(now, self.telemetry_ttl_for(key)) for key, observation in self.observations.items()}
-        if availability != self._availability:
+        settings_availability = {}
+        for device_id in self._settings_observed.keys() | self._parameter_observations.keys():
+            ttl = self.settings_ttl(self._poll_intervals.get(device_id, 10))
+            samples = {None: (self._settings_sessions.get(device_id), self._settings_observed.get(device_id)),
+                       **self._parameter_observations.get(device_id, {})}
+            for key, (holder, stamp) in samples.items():
+                settings_availability[(device_id, key)] = self._settings_sample(holder, stamp, ttl, now)[:2]
+        if availability != self._availability or settings_availability != self._settings_availability:
             self._availability = availability
+            self._settings_availability = settings_availability
             self._notify()
 
     async def _expiry_loop(self):
@@ -742,6 +843,7 @@ class CollectorService:
         while True:
             await asyncio.sleep(1)
             self._expire_observations()
+            self.incidents.tick()
             if not self.compatibility.view()["active"]:
                 for task in list(self._compatibility_tasks):
                     task.cancel()
@@ -762,6 +864,7 @@ class CollectorService:
                 # alive and resume from fresh enrollment data after the freeze.
                 continue
             for device in devices:
+                self._incident_devices[device["device_id"]] = device
                 self.collection_enabled[device["device_id"]] = device["enabled"]
                 self._poll_intervals[device["device_id"]] = device["poll_interval"]
                 if not device["enabled"]:
@@ -850,6 +953,7 @@ class CollectorService:
                         settings = decode_observed(registers,fields_for(device["profile_id"]))
                         self.settings_registers[device_id] = registers
                         self.parameter_readbacks.pop(device_id, None)
+                        self._parameter_observations.pop(device_id, None)
                         self._settings_observed[device_id] = monotonic()
                         self._settings_sessions[device_id] = holder
                         self.settings_observed_at[device_id] = datetime.now(timezone.utc).isoformat()
@@ -898,7 +1002,7 @@ class CollectorService:
         self._healthy[device_id] = 0
         self._next_poll[device_id] = monotonic() + (3, 10, 30)[min(count, 3) - 1]
 
-    def _remember_parameter(self, device_id, field, words):
+    def _remember_parameter(self, device_id, field, words, *, holder):
         from .parameters import decode_observed
         registers = {field.address + offset: word for offset, word in enumerate(words)}
         actual = decode_observed(registers,(field,)).get(field.key)
@@ -907,10 +1011,12 @@ class CollectorService:
         self.parameter_readbacks.setdefault(device_id, {})[field.key] = {
             "value": actual, "observed_at": datetime.now(timezone.utc).isoformat(),
         }
+        self._parameter_observations.setdefault(device_id, {})[field.key] = (holder, monotonic())
         # A single-field readback never refreshes the complete settings group TTL.
         return actual
 
     def _note_success(self, device_id):
+        self.incidents.recovered(device_id)
         healthy = self._healthy.get(device_id, 0) + 1
         self._healthy[device_id] = healthy
         if healthy >= 3:
@@ -948,7 +1054,7 @@ class CollectorService:
                 except BaseException:
                     self._disconnect(holder)
                     raise
-            actual = self._remember_parameter(device_id, field, observed)
+            actual = self._remember_parameter(device_id, field, observed, holder=holder)
             plan_matches=True
             if record.get("write_plan"):
                 from .ascii_settings import readback_matches as plan_readback_matches
@@ -999,7 +1105,7 @@ class CollectorService:
                     raise ValueError("observed_value_changed")
                 await self._durable(self.storage.observe_operation, operation_id, actual)
                 result = await self._durable(self.storage.resolve_operation, operation_id, "accepted_current_value", actor_id)
-                self._remember_parameter(device_id, field, words)
+                self._remember_parameter(device_id, field, words, holder=holder)
             self._notify()
             return result
 
@@ -1160,14 +1266,24 @@ class CollectorService:
                     holder["reader"].pending_ascii_write=write_plan
                 await write_words(holder["reader"], holder["writer"], field.address, words)
                 observed, _, _ = await read_words(holder["reader"], holder["writer"], field.address, len(words))
-                actual = self._remember_parameter(device_id, field, observed)
+                actual = self._remember_parameter(device_id, field, observed, holder=holder)
                 plan_matches=True
                 if write_plan is not None:
                     from .ascii_settings import readback_matches as plan_readback_matches
                     plan_matches=plan_readback_matches(write_plan,getattr(holder["reader"],"latest_ascii_settings",{}))
                 if not plan_matches or not readback_matches(field, words, observed, claimed, current["poll_interval"]):
                     await self._durable(self.storage.observe_operation, operation_id, actual)
-                    return await self._durable(self.storage.finish_operation, operation_id, state="reconciling", outcome="readback_mismatch", unresolved=True, reason="readback_mismatch")
+                    result = await self._durable(self.storage.finish_operation, operation_id, state="reconciling", outcome="readback_mismatch", unresolved=True, reason="readback_mismatch")
+                    # A valid ACK with a mismatching readback is a failure too.
+                    # Diagnostic capture must never rewrite the durable outcome.
+                    try:
+                        self.incidents.record_issue({"code": "readback_mismatch", "stage": "command",
+                            "register_address": field.address, "register_count": len(words)}, self._incident_context(device_id, holder))
+                    except Exception as error:
+                        import logging
+                        logging.getLogger(__name__).warning("Incident capture failed: %s", type(error).__name__)
+                    self._notify()
+                    return result
                 result = await self._durable(self.storage.finish_operation, operation_id, state="completed", outcome="confirmed", unresolved=False, reason=None)
                 self._notify()
                 return result
@@ -1206,6 +1322,8 @@ class CollectorService:
         await self._bind_holder_route(device_id, holder)
         self._enrolled_monotonic[device_id] = monotonic()
         holder["device_id"] = device_id
+        self.callback.identities[collector_sha256] = device_id
+        self._incident_devices[device_id] = await asyncio.to_thread(self.storage.device, device_id)
         self._notify()
         return device_id
 
@@ -1226,8 +1344,9 @@ class CollectorService:
                 # A cancelled waiter may still have committed deletion. Publish the
                 # actual result; HA cleanup also runs at the next setup if interrupted.
                 if await asyncio.to_thread(self.storage.device, device_id) is None:
-                    for cache in (self._enrolled_monotonic, self.observations, self.settings, self.settings_registers, self.parameter_readbacks, self._settings_observed, self._settings_sessions, self._polled,
+                    for cache in (self._enrolled_monotonic, self.observations, self.settings, self.settings_registers, self.parameter_readbacks, self._parameter_observations, self._settings_observed, self._settings_sessions, self._polled,
                                   self._failures, self._healthy, self._next_poll, self._availability, self.collection_enabled,
+                                  self._incident_devices, self._incident_last_context,
                                   self.native_identity, self.settings_observed_at, self.poll_cycles, self.poll_errors, self._planned_reconnect, self.poll_duration_ms):
                         cache.pop(device_id, None)
                     holder = self.connections.get(device["collector_sha256"])
@@ -1267,14 +1386,14 @@ class CollectorService:
         if device.get("profile_id") == "modbus_protocol_4" and holder and holder.get("dialect") == "binary":
             qualified = bool(holder.get("profile_verified") and getattr(holder["reader"],"route_qualified",False))
             caps["inverter_write"] = qualified
-            # Clock uses the same qualified inverter write path. Module reset remains
-            # AT-only; binary has no qualified collector-reset command.
+            # Clock uses the same session-checked inverter write path.
+            # Binary collector reset is not implemented.
             caps["clock_write"] = qualified
         if device.get("profile_id") != "modbus_protocol_4":
             accepted=self.profile_acceptances.get(device["device_id"],{})
             caps["inverter_write"]=bool(holder and holder.get("profile_verified") and accepted and fields_for(device.get("profile_id",""))
                                        and accepted.get("binding",{}).get("transport")==holder.get("dialect"))
-            caps["clock_write"]=bool(device.get("profile_id")=="smg_4" and holder and holder.get("dialect")=="at" and caps["inverter_write"])
+            caps["clock_write"]=bool(device.get("profile_id")=="smg_4" and caps["inverter_write"])
             caps["settings_read"]=bool(fields_for(device.get("profile_id","")))
         return caps
 
@@ -1393,9 +1512,10 @@ class CollectorService:
             device["last_issue"] = next((event for event in reversed(self.issues) if event.get("device_id") == device["device_id"]), None)
             device["telemetry"] = None if device["stale"] or not device["enabled"] else observed.values
             device["settings"] = self.settings.get(device["device_id"], {})
-            settings_at = self._settings_observed.get(device["device_id"])
-            device["settings_available"] = settings_at is not None and monotonic() - settings_at <= max(90, 5 * device["poll_interval"])
-            device["settings_age_seconds"] = None if settings_at is None else round(monotonic() - settings_at, 1)
+            freshness = self.settings_freshness(device)
+            device.update({"settings_" + key: freshness[key] for key in
+                           ("available", "current_session", "age_seconds", "ttl_seconds", "blocked_reason")})
+            device["parameter_freshness"] = {key: self.settings_freshness(device, key) for key in device["settings"]}
             device["settings_refresh_interval"] = max(self.settings_refresh_interval, device["poll_interval"])
             device["unresolved"] = len(await asyncio.to_thread(self.storage.unresolved, device["device_id"]))
             device["operations"] = await asyncio.to_thread(self.storage.recent_operations, device["device_id"])
@@ -1404,6 +1524,7 @@ class CollectorService:
             device["poll_error_count"] = self.poll_errors[device["device_id"]]
             device["connection_options"] = self.callback.saved.get(device["device_id"], {"method": "redirect", "collector_ip": ""})
             device["connection_error"] = "callback_identity_mismatch" if device["device_id"] in self.callback.blocked else None
+            device["incidents"] = self.incidents.view(device["device_id"])
             device["setting_choices"] = getattr(holder["reader"],"setting_choices",{}) if holder and "reader" in holder else {}
         return {
             "runtime_id": self.runtime_id,
@@ -1414,6 +1535,7 @@ class CollectorService:
             "listeners": self.listeners, "degraded": any(not item["bound"] for item in self.listeners),
             "bootstrap_preference": self.bootstrap_preference,
             "compatibility": self.compatibility.view(),
+            "incidents": self.incidents.view(),
             "discovery": list(stages.values())[-8:],
             "profile_searches":[self.search_view(key) for key in self.profile_searches],
             "profile_catalogue":catalogue_view(),

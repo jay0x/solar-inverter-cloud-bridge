@@ -1,7 +1,6 @@
 """Native HA controls using the same durable executor as the panel."""
 
 from types import SimpleNamespace
-from time import monotonic
 import uuid
 
 from homeassistant.exceptions import ServiceValidationError
@@ -18,11 +17,15 @@ from .websocket_api import SIGNAL
 async def setup_controls(hass, entry, async_add_entities, factory):
     entities = {}
 
+    def load_devices(storage):
+        return [{**device, "unresolved": storage.has_unresolved(device["device_id"])}
+                for device in storage.list_devices()]
+
     async def sync():
         runtime = getattr(entry, "runtime_data", None)
         if runtime is None:
             return
-        devices = await hass.async_add_executor_job(runtime["storage"].list_devices)
+        devices = await hass.async_add_executor_job(load_devices, runtime["storage"])
         if getattr(entry, "runtime_data", None) is not runtime:
             return
         active = {device["device_id"] for device in devices}
@@ -34,6 +37,7 @@ async def setup_controls(hass, entry, async_add_entities, factory):
             from .core.drivers import fields_for
             current_fields={field.key:field for field in fields_for(device["profile_id"])}
             identifier = device["device_id"]
+            runtime["service"]._poll_intervals[identifier] = device["poll_interval"]
             if identifier not in entities:
                 entities[identifier] = list(factory(entry, device))
                 fresh.extend(entities[identifier])
@@ -78,16 +82,26 @@ class BridgeControl(Entity):
             return False
         if self._field is None:
             return True
+        return self.blocked_reason is None
+
+    @property
+    def blocked_reason(self):
+        runtime = self._entry.runtime_data
+        if runtime is None:
+            return "bridge_not_loaded"
+        if self._field is None:
+            return None
         if not execution_ready(self._field):
-            return False
+            return "editing_not_allowed"
         service = runtime["service"]
+        freshness = service.settings_freshness(self._device, self._key)
+        if not freshness["available"]:
+            return freshness["blocked_reason"]
         if not service.transport_capabilities(self._device)["inverter_write"]:
-            return False
-        stamp = service._settings_observed.get(self._device_id)
-        return (self._device["enabled"] and stamp is not None
-                and monotonic() - stamp <= max(90, 5 * self._device["poll_interval"])
-                and service._connected(service.connections.get(self._device["collector_sha256"]))
-                and self.observed_value is not None)
+            return "transport_write_unsupported"
+        if self._device.get("unresolved"):
+            return "device_busy_or_unresolved"
+        return None
 
     @property
     def observed_value(self):
@@ -105,9 +119,15 @@ class BridgeControl(Entity):
         if runtime is not None:
             attributes["transport_capabilities"] = runtime["service"].transport_capabilities(self._device)
         if self._field is not None:
+            attributes["blocked_reason"] = self.blocked_reason
             attributes["write_supported"] = (execution_ready(self._field)
                 and runtime is not None and runtime["service"].transport_capabilities(self._device)["inverter_write"])
             if runtime is not None:
+                freshness = runtime["service"].settings_freshness(self._device, self._key)
+                attributes["observation_freshness"] = freshness
+                group = runtime["service"].settings_freshness(self._device)
+                attributes.update({"settings_" + key: group[key] for key in
+                                   ("available", "current_session", "age_seconds", "ttl_seconds")})
                 holder=runtime["service"].connections.get(self._device["collector_sha256"])
                 if holder and "reader" in holder:
                     choices=getattr(holder["reader"],"setting_choices",{}).get(str(self._field.address))
@@ -132,6 +152,10 @@ class BridgeControl(Entity):
                 await self.hass.async_add_executor_job(getattr(runtime["storage"], setter), self._device_id, value)
                 self._device = await self.hass.async_add_executor_job(runtime["storage"].device, self._device_id)
             else:
+                # A cached baseline from another session must not initiate a native edit.
+                # The executor independently rechecks identity, policy and unresolved work.
+                if self.blocked_reason is not None:
+                    raise ValueError(self.blocked_reason)
                 baseline = self.observed_value
                 if baseline is None:
                     raise ValueError("parameter_not_observed")

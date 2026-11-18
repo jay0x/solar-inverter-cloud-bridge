@@ -91,6 +91,18 @@ Periodic settings reads are separated from telemetry: at least 30 seconds betwee
 complete settings reads on the same session. Reconnect, profile renewal and writes
 invalidate reuse. The settings observation timestamp is not advanced by telemetry
 alone. Every command retains its own fresh identity/settings preflight and readback.
+Panel status and native controls share `settings_freshness()`: only the current
+verified session's full group or a fresh individual readback authorizes its observed
+baseline. Individual readbacks do not renew the full group's clock/settings timestamp.
+Settings expiry signals are independent of telemetry expiry. Native entities keep
+unresolved checks in the executor and cache the barrier for presentation through
+async synchronization, never blocking entity properties with SQLite I/O.
+
+Protocol 4 clock setters are implemented for `modbus_protocol_4` and accepted
+`smg_4` on AT and binary. Clock readback permits three seconds of error after accounting
+for elapsed time since send intent, independently of the 1–300-second polling pause.
+The minimum correction threshold is a separate 60-second policy; no upper drift
+limit prevents correcting a valid old clock. Binary collector reset is not implemented.
 Failed integrity checks refuse startup. Do not edit HA-owned `.storage` files.
 
 Current software bounds: 16 saved devices, 100,000 retained operation IDs, 16 queued/
@@ -102,6 +114,9 @@ acceptance and the full-control policy (`control_mode: full`). There is no publi
 mode-setting action or WebSocket command. Updates must preserve enrollment IDs,
 maintenance preferences and unresolved operations. Database downgrades require a
 compatible, consistent backup; unsupported schemas are rejected.
+The optional incident recorder has additive schema-1 diagnostic tables on the same
+worker. Its samples, recording preference and watches do not authorize writes or
+alter operation outcomes. Counts are bounded independently of the command journal.
 Changing a qualified route or permission increments policy revision. Same-profile
 binding renewal is explicit and retains HA IDs; unresolved work blocks replacement.
 

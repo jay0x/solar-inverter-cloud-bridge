@@ -4,6 +4,14 @@ Normal HA diagnostics provide redacted cached operational data. The richer
 compatibility workflow also works before enrollment or when no profile matches.
 It does not require a shell, cloud account or packet-sniffer privileges.
 
+Each device exports its own parameter inventory, actual telemetry/settings TTL,
+current-session settings freshness, single-field readback freshness and both
+maintenance preferences. The root `parameter_inventory` is a compatibility reference
+explicitly labeled `modbus_protocol_4`; consumers should use device inventories.
+The base telemetry grace is 60 seconds, not the full TTL: the configured pause is
+added per device. Ordinary diagnostics omit rejected-payload hex along with raw wire
+frames; full protocol bytes remain an explicit compatibility export choice.
+
 ## Capture contract
 
 - A 256-event operational ring retains redacted admission/decision context.
@@ -24,6 +32,49 @@ It does not require a shell, cloud account or packet-sniffer privileges.
   own bounded read plan, described in [profile expansion](../PROFILE_EXPANSION.md).
 - Diagnostic probes send no inverter writes, module resets, UART changes or clock
   adjustments. Observed user/background operations retain their distinct origins.
+
+## Persistent passive incident recorder
+
+`core/incidents.py` receives the same original session events independently of an
+explicit two-minute compatibility capture. `IncidentRecorder.observe()` performs
+bounded in-memory work only; fault hooks enqueue a coalesced snapshot to the existing
+SQLite worker. Admission in `Storage.async_call()` never blocks the event loop on
+the synchronous worker lock. Initial-load cancellation and writer failure cannot
+leave a flush waiting for a nonexistent task.
+
+The additive diagnostic tables `incident_state` and `incident_records` use incident
+schema 1 and do not change ledger schema 4 or command recovery. Unknown diagnostic
+schemas are not overwritten. There is one pending and one in-flight snapshot;
+serialization and archive generation run off the event loop. Backup freeze retries
+are bounded and do not recursively produce incidents.
+
+The recorder retains 60 seconds / 512 KiB / 2048 events, up to 32 device/fingerprint
+groups and 16 MiB of serialized samples, at most three samples per group. The first
+sample is queued immediately; a ten-second tail is added afterward. Restart retains
+saved evidence, counts, recording preference and UTC watch expiry. Raw recording
+never schedules a probe or operation. Durable command readback mismatch is captured,
+and a later healthy poll never marks command uncertainty recovered.
+
+Fingerprint revision 1 includes normalized error/stage/profile/transport and native
+function/register/count/exception/response shape. It excludes device identities,
+IP, PN, TID, timestamps and changing measurement values. Latest firmware/model
+metadata is separate. The local known-symptom catalogue and user-initiated GitHub
+search do not perform network lookups or automatically open issues.
+
+Exports reuse the compatibility archive schema and validator. Raw bytes require an
+explicit choice. Session/source references are remapped; only whitelisted event
+fields enter sanitized exports. Original continuous segments have separate replay
+session aliases across gaps: truncated samples must never be stitched into a
+fictional CRC-valid packet. `capture_gap` and `context.capture_continuity` explain
+missing data. Original dialect metadata can be supplied as `context_only`.
+Each sample retains its immutable `capture_build`; top-level build identifies the
+exporter, explicitly labeled in context/analysis. Old samples without capture build
+remain unknown, rather than acquiring the current build after an upgrade.
+
+The administrator-only `solar_inverter_bridge/incidents` WebSocket API exposes
+status, configure, watch/cancel, delete, download and separate per-feature feedback.
+It changes no inverter setting. Neither diagnostics nor feedback is automatically
+uploaded. Manual legacy compatibility collection continues independently.
 
 ## User workflow and export
 

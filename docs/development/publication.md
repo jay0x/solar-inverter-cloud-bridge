@@ -5,12 +5,15 @@
 - Product: **Solar Inverter Cloud Bridge**.
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
 - Integration domain and component directory: `solar_inverter_bridge`.
-- Current source candidate: **0.9.0**, panel **0.22.0**, ledger schema **4**.
+- Release: **1.0.0**, panel **0.24.0**, ledger schema **4**, incident schema **1**.
 - Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
-The public repository is available as a HACS custom repository. Version 0.9.0 is
-a pre-release; default-catalog inclusion requires maintainer approval. Current
+The public repository is available as a HACS custom repository. Version 1.0.0 is
+a normal release, not a pre-release; default-catalog inclusion requires maintainer approval. Current
 checks and installation evidence are in [verification](../verification/README.md).
+Home Assistant Marketplace uses the same `hacs/default` catalog and `hacs.json`;
+there is no separate catalog submission. The existing catalog PR is
+[hacs/default #13972](https://github.com/hacs/default/pull/13972).
 
 ## Repository contents and installation
 
@@ -26,7 +29,7 @@ Public source includes the component, tests, tools, public documentation, licens
 notices and GitHub metadata. Exclude private access/evidence files, databases,
 caches and generated outputs. Review both tracked and intended untracked files.
 
-## Required pre-release documentation review
+## Required documentation review before publication
 
 Recheck documentation against the **exact source fingerprint to be released**.
 Describe current behavior and qualification without internal development chronology.

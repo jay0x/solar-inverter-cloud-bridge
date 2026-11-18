@@ -181,9 +181,11 @@ field read-only, but exact wire limits, steps and documented dependencies still 
   from ratings. Optional PV1/PV2 replies and status flags extend the measurement set.
 
 CRC errors, timeouts and malformed frames are not silently treated as unsupported
-fields. Writes require a freshly observed selected setting. Binary collector reset
-and inverter clock writes remain unsupported. Profiles with zero controls explain
-the limitation and offer report collection.
+fields. Writes require a freshly observed selected setting. Protocol 4 clock sync is
+implemented for both reference and accepted `smg_4` profiles on AT and binary.
+Other clock setters and binary collector reset are not implemented. Profiles with
+zero controls explain the missing implementation and offer report collection;
+they do not imply that every physical setting is read-only.
 
 ## Evidence and sources
 

@@ -16,6 +16,10 @@ def clock_write_allowed(enabled: bool) -> bool:
 
 MIN_CLOCK_CORRECTION_SECONDS = 60
 
+# Allow one-second clock quantization and a short target-to-write delay. A longer
+# delay stays unresolved; the polling pause is not evidence of clock accuracy.
+CLOCK_READBACK_TOLERANCE_SECONDS = 3
+
 
 def clock_drift_seconds(observed: str, target: str) -> float:
     from datetime import datetime

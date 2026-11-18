@@ -33,6 +33,18 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
 window.state = ${JSON.stringify(fixture)}; window.calls = []; window.operations = {}; window.loseReply = false;
 window.deviceTemplate = structuredClone(state.devices[0]); window.holdVerification = false;
 window.profileLayerFixtures = ${JSON.stringify(profileLayers)};
+// This mock is server-owned state: UI draft storage must not reconstruct its settings,
+// watch or evidence after a reload. Tests can replace the panel without resetting it.
+window.incidentBackend = JSON.parse(sessionStorage.getItem('mock-incident-backend') || 'null') || {
+  enabled:true, limits:{ring_seconds:60,tail_seconds:10,ring_bytes:524288,fingerprints:32,samples_per_problem:3,serialized_sample_bytes:16777216,watch_hours:[1,24]},
+  watches:[], incidents:[], dropped_events:0,evicted_incidents:0,serialized_sample_bytes:0,persistence:'enabled',persistence_error:null,pending_write:false
+};
+window.persistIncidents = () => sessionStorage.setItem('mock-incident-backend',JSON.stringify(incidentBackend));
+window.incidentView = deviceId => {
+  const {watches,...view}=structuredClone(incidentBackend);
+  const selected=watches.filter(w=>deviceId===undefined || w.device_id===deviceId);
+  return {...view,watch:selected.length===1?selected[0]:{active:selected.some(w=>w.active),expires_at:null,items:selected},incidents:view.incidents.filter(i=>deviceId===undefined || i.device_id===deviceId)};
+};
 const shell = document.querySelector('#ha-shell').attachShadow({mode:'open'});
 shell.innerHTML = '<div id="ha-main"></div>';
 const main = shell.querySelector('#ha-main').attachShadow({mode:'open'});
@@ -40,7 +52,31 @@ main.innerHTML = '<solar-inverter-bridge-panel></solar-inverter-bridge-panel>';
 const element = window.testPanel = main.querySelector('solar-inverter-bridge-panel');
 element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
   calls.push(structuredClone(request));
-  if (request.type.endsWith('/status')) return structuredClone(state);
+  if (request.type.endsWith('/status')) {
+    state.incidents=incidentView();
+    for (const device of state.devices) device.incidents=incidentView(device.device_id);
+    return structuredClone(state);
+  }
+  if (request.type.endsWith('/incidents')) {
+    if (window.failIncidentRequest) {window.failIncidentRequest=false;throw new Error('storage_unavailable');}
+    if (request.action==='configure') incidentBackend.enabled=request.enabled;
+    if (request.action==='watch') {
+      if (!request.device_id || !Number.isInteger(request.hours) || request.hours<1 || request.hours>24) throw new Error('invalid_incident_watch');
+      incidentBackend.watches=incidentBackend.watches.filter(w=>w.device_id!==request.device_id);
+      incidentBackend.watches.push({device_id:request.device_id,active:true,status:'armed',expires_at:new Date(Date.now()+request.hours*3600000).toISOString()});
+    }
+    if (request.action==='cancel_watch') Object.assign(incidentBackend.watches.find(w=>w.device_id===request.device_id),{active:false,status:'cancelled'});
+    if (request.action==='delete') incidentBackend.incidents=incidentBackend.incidents.filter(i=>!(i.fingerprint===request.fingerprint && (request.device_id===undefined || request.device_id===i.device_id)));
+    persistIncidents();
+    if (request.action==='download' || request.action==='feedback') {
+      if (request.action==='feedback' && ('fingerprint' in request || 'include_raw' in request)) throw new Error('Feedback must be separate from failure export');
+      const incident=incidentBackend.incidents.find(i=>i.fingerprint===request.fingerprint && (request.device_id===undefined || request.device_id===i.device_id));
+      if (request.action==='download' && !incident) throw new Error('incident_not_found');
+      const issue_summary=incident ? incident.fingerprint+' '+incident.code+'; occurrences: '+incident.count+'; recovered: '+incident.recovered_count+'; samples: '+incident.sample_count : 'User-reported '+request.feedback[0].feature+': '+request.feedback[0].result;
+      return {filename:request.action==='feedback'?'compatibility-feedback.zip':'incident-report.zip',base64:btoa(request.include_raw?'RAW ZIP simulation':'SANITIZED ZIP simulation'),analysis:{issue_summary,search_url:incident?.search_url || 'https://github.com/jay0x/solar-inverter-cloud-bridge/issues?q=compatibility'}};
+    }
+    return incidentView(request.device_id);
+  }
   if (request.type.endsWith('/network_hints')) return {ha_ip:'192.168.10.77',subnet:'192.168.10.0/24',router_ip:'192.168.10.1',dns_ip:'192.168.10.1',addresses:[{address:'192.168.10.77',network:'192.168.10.0/24',default:true}]};
   if (request.type.endsWith('/configure_network')) { state.allowed_sources=request.allowed_sources; if (request.bootstrap_preference) state.bootstrap_preference=request.bootstrap_preference; return {}; }
   if (request.type.endsWith('/connect_collector')) {
@@ -251,7 +287,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(diagnostic.schema,2);
     assert.equal(diagnostic.parameter_inventory.length,51);
     assert.equal(diagnostic.recent_issues[0].register_address,630);
-    assert.equal(diagnostic.frontend.version,'0.22.0');
+    assert.equal(diagnostic.frontend.version,'0.24.0');
     console.log('PASS timestamped issue in HA time zone and backend diagnostics download');
 
     await page.evaluate(() => window.testPanel._navigate("sib/device/test-device/settings"));
@@ -703,10 +739,27 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await page.waitForFunction(()=>state.devices[0].enabled);
     console.log('PASS existing connection editing, retained enrollment, paused-save explanation and validated one-second polling pause');
 
+    await page.evaluate(()=>{
+      state.devices[0].settings_available=false;
+      state.devices[0].parameter_freshness={primary_output_priority:{available:true,current_session:true,source:'parameter_readback'}};
+      testPanel._navigate('sib/device/test-device/settings');
+    });
+    await refresh();
+    assert.equal(await page.locator('[data-action="edit"]').count(),1);
+    assert.equal(await page.locator('[data-action="edit"][data-value="primary_output_priority"]').count(),1);
+    assert.match(await panel().innerText(),/Implemented controls are available even when your model or firmware has not been hardware-tested/);
+    await page.evaluate(()=>{
+      state.devices[0].settings_available=true;
+      delete state.devices[0].parameter_freshness;
+    });
+    await refresh();
+    console.log('PASS single-field freshness stays editable without making the full settings group fresh; unverified-feature feedback remains visible');
+
     await page.evaluate(() => {window.originalTestDevices=structuredClone(state.devices);state.devices[0].capabilities={inverter_write:false,module_reset:false};state.devices[0].transport='binary';state.devices[0].capability_reason='Binary monitoring only';testPanel._navigate('sib/device/test-device/settings');});
     await refresh();
     assert.equal(await page.locator('[data-action="edit"]').count(),0);
     assert((await panel().innerText()).includes('Binary monitoring only'));
+    assert.match(await panel().innerText(),/Binary collector reset is not implemented/);
     await page.evaluate(() => testPanel._navigate('sib/device/test-device/connection'));
     assert(await page.locator('[data-action="reset-module"]').isDisabled());
     await page.evaluate(() => {state.devices=[];testPanel._navigate('sib');});
@@ -756,6 +809,284 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert(buttons.every(height => height >= 44));
     assert.deepEqual(errors, []);
     console.log("PASS offline state, escaping, 44px controls, no browser exceptions");
+
+    const incidentCalls = () => page.evaluate(()=>calls.filter(c=>c.type.endsWith('/incidents')));
+    const settled = () => page.waitForFunction(()=>!testPanel._busy && !testPanel._loading);
+    const incidentPanel = () => page.locator('.incident-panel');
+    let incidentDownloads = 0;
+    const externalRequests = [];
+    page.on('download',()=>incidentDownloads++);
+    page.on('request',request=>{if (!request.url().startsWith(url) && !request.url().startsWith('blob:')) externalRequests.push(request.url());});
+    await page.evaluate(()=>{
+      state.devices=[structuredClone(deviceTemplate)];
+      const item={device_id:'test-device',fingerprint:'sib-inc-v1-0123456789abcdef01234567',code:'TimeoutError',stage:'poll',profile_id:'modbus_protocol_4',transport:'binary',first_seen:'2026-11-01T10:00:00+00:00',last_seen:'2026-11-02T12:00:00+00:00',count:8,recovered_count:8,sample_count:3,status:'recovered',needs_attention:false,known_issue:{title:'Communication timeout',status:'known_symptom',advice:'Review the retained exchange if it persists.'},search_url:'https://github.com/jay0x/solar-inverter-cloud-bridge/issues?q=is%3Aissue+%22sib-inc-v1-0123456789abcdef01234567%22'};
+      incidentBackend.incidents=[item,{...structuredClone(item),device_id:'',count:2,recovered_count:0,status:'unrecovered',needs_attention:true}];
+      incidentBackend.serialized_sample_bytes=4096;
+      incidentBackend.dropped_events=4;
+      incidentBackend.evicted_incidents=1;
+      persistIncidents();
+      testPanel._navigate('sib/device/test-device/activity');
+    });
+    await refresh();
+    assert.equal(await page.locator('#incident-enabled').isChecked(),true);
+    assert.equal(await highlighted('incident-configure'),false);
+    assert.equal(await incidentPanel().locator('.incident-card').count(),1,'Repeated faults render one backend fingerprint card');
+    assert.match(await incidentPanel().innerText(),/8 \/ 8 \/ 3/);
+    assert.match(await incidentPanel().innerText(),/recovered · No attention needed/);
+    assert.match(await incidentPanel().innerText(),/60 seconds before failure \+ 10 seconds after/);
+    assert.match(await incidentPanel().innerText(),/4096 \/ 16777216/);
+    assert.match(await incidentPanel().innerText(),/Dropped events: 4 · Evicted incidents: 1/);
+    assert.equal(await page.locator('[role="alert"], dialog[open]').count(),0,'Known recovered incidents have no popup or alert');
+    assert.deepEqual(await incidentCalls(),[]);
+    assert.equal(incidentDownloads,0);
+    assert.match(await incidentPanel().innerText(),/Nothing is uploaded automatically/);
+    await page.evaluate(()=>{Object.assign(incidentBackend.incidents[0],{count:9,recovered_count:9});persistIncidents();});
+    await refresh();
+    assert.equal(await incidentPanel().locator('.incident-card').count(),1);
+    assert.match(await incidentPanel().innerText(),/9 \/ 9 \/ 3/);
+    assert.equal(await page.locator('[role="alert"], dialog[open]').count(),0,'A repeated recovered event only updates counters');
+
+    await page.locator('#incident-enabled').uncheck();
+    assert.equal(await highlighted('incident-configure'),true);
+    await page.locator('#incident-enabled').check();
+    assert.equal(await highlighted('incident-configure'),false);
+    await page.locator('#incident-enabled').uncheck();
+    await page.evaluate(()=>{window.focusedIncidentToggle=testPanel.querySelector('#incident-enabled');});
+    await refresh();
+    assert(await page.evaluate(()=>focusedIncidentToggle===testPanel.querySelector('#incident-enabled')));
+    assert.equal(await highlighted('incident-configure'),true);
+    await page.getByRole('button',{name:'Save incident recording',exact:true}).click();
+    await settled();
+    assert.equal((await incidentCalls()).at(-1).enabled,false);
+    assert.equal(await highlighted('incident-configure'),false);
+    assert.equal(await page.evaluate(()=>Object.hasOwn(testPanel._drafts,'incidents:enabled')),false);
+    await page.evaluate(()=>{
+      // Remove frontend settings entirely: the server is the source of truth.
+      localStorage.removeItem(testPanel._storageKey);
+    });
+    await page.reload();
+    await page.locator('#incident-enabled').waitFor();
+    assert.equal(await page.locator('#incident-enabled').isChecked(),false);
+    assert.equal(await incidentPanel().locator('.incident-card').count(),1);
+    assert.deepEqual(await incidentCalls(),[],'Loading persisted evidence must not send a management command');
+    assert.equal(incidentDownloads,0,'No export is triggered by refresh or reload');
+
+    await page.evaluate(()=>{state.devices[0].enabled=false;});
+    await refresh();
+    assert.match(await incidentPanel().innerText(),/Collection is paused for this device/);
+    assert.match(await incidentPanel().innerText(),/never starts polling/);
+    for (const invalid of ['', '0','25','1.5']) {
+      await page.locator('#incident-watch-hours').fill(invalid);
+      await page.getByRole('button',{name:'Catch next failure',exact:true}).click();
+    }
+    assert.deepEqual(await incidentCalls(),[],'Invalid watch durations must not reach the backend');
+    await page.locator('#incident-watch-hours').fill('24');
+    await page.getByRole('button',{name:'Catch next failure',exact:true}).click();
+    await settled();
+    assert.deepEqual((await incidentCalls()).at(-1),{type:'solar_inverter_bridge/incidents',action:'watch',device_id:'test-device',hours:24});
+    assert.match(await page.locator('.watch-status').innerText(),/armed · Active · Expires:/);
+    assert.equal(await page.evaluate(()=>state.devices[0].enabled),false);
+    assert.equal(await page.evaluate(()=>calls.filter(c=>/\/(set_collection|connect_collector|set_connection|apply|compatibility)$/.test(c.type)).length),0);
+    await page.evaluate(()=>{localStorage.removeItem(testPanel._storageKey);});
+    await page.reload();
+    await page.locator('.watch-status').waitFor();
+    assert.match(await page.locator('.watch-status').innerText(),/armed · Active · Expires:/);
+    assert.deepEqual(await incidentCalls(),[],'Reload observes a persisted watch without rearming it');
+    await page.evaluate(()=>{Object.assign(incidentBackend.watches[0],{active:false,status:'captured',fingerprint:incidentBackend.incidents[0].fingerprint});persistIncidents();});
+    await refresh();
+    assert.match(await page.locator('.watch-status').innerText(),/captured · Inactive.*Captured: sib-inc-v1-/);
+    assert(await page.getByRole('button',{name:'Cancel watch',exact:true}).isDisabled());
+    await page.locator('#incident-watch-hours').fill('1');
+    await page.getByRole('button',{name:'Catch next failure',exact:true}).click();
+    await settled();
+    await page.getByRole('button',{name:'Cancel watch',exact:true}).click();
+    await settled();
+    assert.match(await page.locator('.watch-status').innerText(),/cancelled · Inactive/);
+    assert.equal((await incidentCalls()).at(-1).action,'cancel_watch');
+    console.log('PASS persistent incident configuration/evidence/watch, dirty policy, 1–24-hour validation and passive paused-device watch');
+
+    await page.locator('[data-disclosure="incident-export-metadata"] > summary').click();
+    await page.locator('#incident-report-inverter_model').fill('Model <safe>');
+    await page.locator('#incident-report-symptom').fill('Recovered after timeout');
+    await page.evaluate(()=>{window.focusedIncidentDraft=testPanel.querySelector('#incident-report-symptom');focusedIncidentDraft.setSelectionRange(4,9);});
+    await refresh();
+    assert(await page.evaluate(()=>focusedIncidentDraft===testPanel.querySelector('#incident-report-symptom') && focusedIncidentDraft.selectionStart===4 && focusedIncidentDraft.selectionEnd===9));
+    assert.equal(await page.locator('#incident-raw').isChecked(),false);
+    let incidentZip = page.waitForEvent('download');
+    await page.getByRole('button',{name:'Download incident ZIP',exact:true}).click();
+    let incidentDownload = await incidentZip;
+    await settled();
+    assert.equal(incidentDownload.suggestedFilename(),'incident-report.zip');
+    assert.equal(fs.readFileSync(await incidentDownload.path(),'utf8'),'SANITIZED ZIP simulation');
+    const sanitized=(await incidentCalls()).at(-1);
+    assert.equal(sanitized.include_raw,false);
+    assert.equal(sanitized.device_id,'test-device');
+    assert.equal(sanitized.metadata.inverter_model,'Model <safe>');
+    assert.equal(sanitized.metadata.symptom,'Recovered after timeout');
+    assert.match(await page.locator('.incident-report pre').innerText(),/occurrences: 9; recovered: 9; samples: 3/);
+    await context.grantPermissions(['clipboard-read','clipboard-write']);
+    await page.getByRole('button',{name:'Copy report description',exact:true}).click();
+    assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/occurrences: 9; recovered: 9; samples: 3/);
+    await page.locator('#incident-raw').check();
+    await refresh();
+    assert.equal(await page.locator('#incident-raw').isChecked(),true);
+    incidentZip = page.waitForEvent('download');
+    await page.getByRole('button',{name:'Download incident ZIP',exact:true}).click();
+    incidentDownload=await incidentZip;
+    await settled();
+    assert.equal(fs.readFileSync(await incidentDownload.path(),'utf8'),'RAW ZIP simulation');
+    assert.equal((await incidentCalls()).at(-1).include_raw,true);
+    assert.equal(await page.locator('#incident-raw').isChecked(),false,'Raw consent is consumed by one successful export');
+    await page.locator('#incident-raw').check();
+    await page.reload();
+    await page.locator('#incident-raw').waitFor();
+    assert.equal(await page.locator('#incident-raw').isChecked(),false,'Raw consent is never saved in browser drafts');
+    await page.locator('[data-disclosure="incident-export-metadata"] > summary').click();
+    assert.equal(await page.locator('#incident-report-symptom').inputValue(),'Recovered after timeout');
+    assert.deepEqual(await incidentCalls(),[]);
+    console.log('PASS sanitized download default, explicit one-export raw opt-in, deduplicated summary/copy and report drafts/focus');
+
+    await page.locator('[data-disclosure="incident-feedback"] > summary').click();
+    await page.locator('#incident-feedback-inverter_model').fill('Unlisted model');
+    await page.locator('#incident-feedback-collector_model').fill('Wi-Fi collector');
+    await page.locator('#incident-feedback-firmware').fill('8.50');
+    await page.locator('#incident-feedback-feature').fill('setting.output_voltage_setting');
+    await page.locator('#incident-feedback-result').selectOption('working');
+    await page.evaluate(()=>{window.focusedFeedbackSelect=testPanel.querySelector('#incident-feedback-result');});
+    await refresh();
+    assert(await page.evaluate(()=>focusedFeedbackSelect===testPanel.querySelector('#incident-feedback-result')));
+    const comment='<img src=x onerror="window.incidentInjected=true"> Works on this firmware';
+    await page.locator('#incident-feedback-comment').fill(comment);
+    await page.evaluate(()=>{window.focusedFeedback=testPanel.querySelector('#incident-feedback-comment');focusedFeedback.setSelectionRange(1,5);});
+    await refresh();
+    assert(await page.evaluate(()=>focusedFeedback===testPanel.querySelector('#incident-feedback-comment') && focusedFeedback.selectionStart===1 && focusedFeedback.selectionEnd===5));
+    for (const result of ['working','not_working','unknown']) {
+      await page.locator('#incident-feedback-result').selectOption(result);
+      incidentZip=page.waitForEvent('download');
+      await page.getByRole('button',{name:'Download feedback report',exact:true}).click();
+      assert.equal((await incidentZip).suggestedFilename(),'compatibility-feedback.zip');
+      await settled();
+      const feedback=(await incidentCalls()).at(-1);
+      assert.deepEqual(feedback.feedback,[{feature:'setting.output_voltage_setting',result,comment}]);
+      assert.deepEqual(feedback.metadata,{inverter_model:'Unlisted model',collector_model:'Wi-Fi collector',firmware:'8.50'});
+      assert(!('fingerprint' in feedback));
+      assert(!('include_raw' in feedback));
+      assert.equal(await page.locator('#incident-report-inverter_model').inputValue(),'Model <safe>','Feedback metadata must not replace the failure description');
+    }
+    const validFeedbackCount=(await incidentCalls()).length;
+    for (const feature of ['', 'bad feature', '<script>', 'x'.repeat(97)]) {
+      await page.locator('#incident-feedback-feature').evaluate((node,value)=>{node.value=value;node.dispatchEvent(new Event('input'));},feature);
+      await page.getByRole('button',{name:'Download feedback report',exact:true}).click();
+    }
+    assert.equal((await incidentCalls()).length,validFeedbackCount,'Invalid feature IDs are rejected before export');
+    await page.locator('#incident-feedback-feature').fill('telemetry');
+    assert.equal(await page.evaluate(()=>Boolean(window.incidentInjected)),false);
+    assert.equal(await incidentPanel().locator('img').count(),0);
+    console.log('PASS separate per-feature compatibility feedback, all results, bounded metadata and escaped drafts');
+
+    await page.evaluate(()=>{
+      state.devices.push({...structuredClone(deviceTemplate),device_id:'recognized-device',name:'Recognized profile',profile_id:'smg_4',enabled:false,capabilities:{inverter_write:false},incidents:undefined});
+      incidentBackend.incidents.push({...structuredClone(incidentBackend.incidents[0]),device_id:'recognized-device',profile_id:'smg_4'});
+      Object.assign(incidentBackend,{persistence:'memory_only',persistence_error:'storage_unavailable <img src=x onerror="window.incidentInjected=true">',pending_write:true});
+      persistIncidents();
+      testPanel._navigate('sib');
+    });
+    await refresh();
+    await page.locator('[data-disclosure="incident-diagnostics"] > summary').click();
+    assert.equal(await incidentPanel().locator('.incident-card').count(),3);
+    assert.match(await incidentPanel().innerText(),/Bridge \/ pre-enrollment/);
+    assert.match(await incidentPanel().innerText(),/memory_only · Pending write/);
+    assert.match(await incidentPanel().innerText(),/Persistence error: storage_unavailable/);
+    assert.match(await incidentPanel().innerText(),/does not survive a Home Assistant restart/);
+    await page.locator('#incident-watch-device').selectOption('recognized-device');
+    assert.match(await incidentPanel().innerText(),/Collection is paused/);
+    await page.getByRole('button',{name:'Catch next failure',exact:true}).click();
+    await settled();
+    assert.equal((await incidentCalls()).at(-1).device_id,'recognized-device');
+    assert.equal(await page.evaluate(()=>state.devices[1].enabled),false);
+    for (const width of [390,1440]) {
+      await page.setViewportSize({width,height:1000});
+      await overflow();
+      assert(await incidentPanel().evaluate(node=>node.scrollWidth<=node.clientWidth+1),'Incident content overflows');
+    }
+    await page.evaluate(()=>testPanel._navigate('sib/device/recognized-device/activity'));
+    assert.equal(await incidentPanel().count(),1,'Activity must not duplicate global report controls');
+    assert.equal(await incidentPanel().locator('.incident-card').count(),1,'Profile-recognized devices use the same incident tools');
+    assert.match(await page.locator('.watch-status').innerText(),/armed · Active/);
+    await page.evaluate(()=>testPanel._navigate('sib'));
+    // Delete only bridge evidence, even when another device shares its fingerprint.
+    await page.locator('[data-action="incident-delete"][data-device=""]').click();
+    await settled();
+    assert.equal((await incidentCalls()).at(-1).device_id,'');
+    assert.equal(await incidentPanel().locator('.incident-card').count(),2);
+    await page.evaluate(()=>{window.failIncidentRequest=true;});
+    await page.locator('[data-action="incident-delete"][data-device="recognized-device"]').click();
+    await settled();
+    assert.equal(await incidentPanel().locator('.incident-card').count(),2,'Failed deletion must retain evidence');
+    assert.match(await page.getByRole('alert').innerText(),/could not save its data/);
+    await page.getByRole('button',{name:'Dismiss',exact:true}).click();
+
+    const unsafeLinks=['javascript:alert(1)','data:text/html,evil','http://github.com/jay0x/solar-inverter-cloud-bridge/issues','https://github.com.evil.test/jay0x/solar-inverter-cloud-bridge/issues','https://github.com@evil.test/jay0x/solar-inverter-cloud-bridge/issues','https://evil@github.com/jay0x/solar-inverter-cloud-bridge/issues','https://github.com/jay0x/other/issues','https://github.com/jay0x/solar-inverter-cloud-bridge/issues/new','//github.com/jay0x/solar-inverter-cloud-bridge/issues'];
+    for (const search_url of unsafeLinks) {
+      await page.evaluate(search_url=>{for (const item of incidentBackend.incidents) {item.search_url=search_url;item.known_issue.title='<img src=x onerror="window.incidentInjected=true">';item.known_issue.advice='<script>window.incidentInjected=true</script>';item.known_issue.issue_url=search_url;}},search_url);
+      await refresh();
+      assert.equal(await incidentPanel().locator('.incident-card a').count(),0,'Unsafe search URL rendered: '+search_url);
+    }
+    await page.evaluate(()=>{
+      for (const item of incidentBackend.incidents) item.search_url='https://github.com/jay0x/solar-inverter-cloud-bridge/issues?q=%22safe%22';
+      incidentBackend.incidents.push({...structuredClone(incidentBackend.incidents[0]),device_id:'',code:'unknown_payload'});
+      state.devices=[];
+      testPanel._navigate('sib');
+    });
+    await refresh();
+    await page.locator('[data-disclosure="home-help"] > summary').click();
+    assert.match(await incidentPanel().innerText(),/Add an inverter to arm a device watch/);
+    assert.equal(await incidentPanel().locator('.incident-card a').count(),3);
+    assert.equal(await page.getByRole('button',{name:'Catch next failure',exact:true}).count(),0);
+    assert.equal(await incidentPanel().locator('img, script').count(),0);
+    assert.equal(await page.evaluate(()=>Boolean(window.incidentInjected)),false);
+    assert.deepEqual(externalRequests,[],'Reports must not be sent automatically to any external site');
+    assert.equal(await page.evaluate(()=>calls.filter(c=>/\/(apply|set_collection|connect_collector|set_connection|compatibility)$/.test(c.type)).length),0);
+    for (const width of [390,1440]) {
+      await page.setViewportSize({width,height:1000});
+      await overflow();
+      assert(await incidentPanel().evaluate(node=>node.clientWidth>=220),'Nested diagnostics must retain readable mobile content width');
+    }
+    assert.deepEqual(errors,[]);
+    console.log('PASS all-device/bridge diagnostics, scoped delete/error retention, persistence errors, safe GitHub links, escaping and 390/1440 layouts; no automatic sharing or device commands');
+    for (const width of [360,390,1440]) {
+      for (const route of ['sib/device/test-device/activity','sib']) {
+        await page.setViewportSize({width,height:1000});
+        await page.evaluate(route=>{
+          state.devices=[structuredClone(deviceTemplate)];
+          incidentBackend.enabled=true;
+          incidentBackend.incidents=[{device_id:'test-device',fingerprint:'sib-inc-v1-0123456789abcdef01234567',code:'TimeoutError',count:1,recovered_count:1,sample_count:2,status:'recovered',needs_attention:false}];
+          testPanel._drafts={};testPanel._saveDrafts();
+          testPanel._disclosures['incident-diagnostics']=true;
+          persistIncidents();testPanel._navigate(route);
+        },route);
+        await refresh();
+        const saveRecording=page.getByRole('button',{name:'Save incident recording',exact:true});
+        await page.locator('#incident-enabled').uncheck();
+        assert(await saveRecording.isVisible());
+        await saveRecording.click();await settled();
+        assert.equal(await page.evaluate(()=>incidentBackend.enabled),false);
+        assert.match(await page.locator('#incident-recording-status').innerText(),/Saved state: recording disabled\. All changes saved\./);
+        await page.getByRole('button',{name:'Delete local evidence',exact:true}).click();await settled();
+        assert.equal(await incidentPanel().locator('.incident-card').count(),0);
+        await page.locator('#incident-enabled').check();
+        await refresh();
+        assert(await saveRecording.isVisible(),'Save must remain visible after disabling recording and deleting all incidents');
+        assert.equal(await highlighted('incident-configure'),true);
+        assert.equal(await page.evaluate(()=>incidentBackend.enabled),false,'A checked draft is not a saved recording preference');
+        assert.match(await page.locator('#incident-recording-status').innerText(),/Saved state: recording disabled\. Unsaved change: enable recording/);
+        await saveRecording.click();await settled();
+        assert.equal(await page.evaluate(()=>incidentBackend.enabled),true);
+        assert.equal(await highlighted('incident-configure'),false);
+        assert.match(await page.locator('#incident-recording-status').innerText(),/Saved state: recording enabled\. All changes saved\./);
+      }
+    }
+    console.log('PASS disable → delete all incidents → re-enable on Activity and global Diagnostics at 360/390/1440px');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

@@ -1,6 +1,6 @@
 # Install and operate Solar Inverter Cloud Bridge
 
-The current source candidate is 0.9.0; consult release notes for tagged-release features. The integration runs
+This guide describes release **1.0.0**, with panel **0.24.0**. The integration runs
 inside Home Assistant Core. It does not require a Supervisor app, MQTT, or a separate
 frontend plugin. The current target is Home Assistant Core 2026.10.4.
 
@@ -76,6 +76,10 @@ setup for those paths.
 A request has a 120-second connection window. Repeating a retained attempt ID does
 not resend; a visible Retry connection action creates a new attempt. Attempt IDs
 are bounded runtime state, unlike the durable IDs used for inverter writes.
+Manual IDs are retained for ten minutes after creation or the first successful
+admission. Later reconnects do not renew that retention window. Automatic reconnects
+replace the same device's completed attempt rather than filling the shared table;
+active waiting requests are not evicted.
 Saved callback devices retry only while collection is enabled and disconnected,
 at most once per 120 seconds. A full-identity mismatch blocks automatic attempts for
 that runtime. Review the collector identity rather than accepting a different device.
@@ -97,10 +101,12 @@ disconnected and an IP is provided. A saved preference or sent UDP request is no
 proof of a working connection; check the active port and fresh readings.
 The collector IP is retained when switching to a redirected connection and is not
 used for callback until Local connection or Automatic with that IP is selected again.
-Readings, supported setting writes, and clock sync work on AT and Binary EyeBond.
-Restart Wi-Fi module is an AT command. It is unavailable on Binary EyeBond, including
-the confirmed local callback. A redirected connection normally negotiates AT and keeps
-that command. The connection step and Configuration page state this limitation.
+Implemented setting writes work on AT and Binary EyeBond. Clock sync is implemented
+for Protocol 4 (`modbus_protocol_4` and accepted `smg_4`) on both transports; other
+profiles do not currently implement a clock setter. Restart Wi-Fi module uses an AT
+command. A binary reset command is not implemented; this is not proof that the
+hardware cannot reset. The connection step and Configuration page explain the
+limitations and offer compatibility report collection.
 
 With **Collect readings** unchecked, saving only stores the connection preference
 and does not send a callback. Enable collection to resume polling and automatic
@@ -157,7 +163,7 @@ Installation from the development branch was verified using HACS 2.0.5 on HA 202
 
 1. In HACS, open **Custom repositories**, add the repository URL and choose
    **Integration** as its category.
-2. Enable beta versions for the repository to select pre-release `v0.9.0`, download
+2. Select the normal release **v1.0.0** (beta versions are not required), download
    **Solar Inverter Cloud Bridge**, and restart Home Assistant.
 3. Add the integration and configure the collector as described above.
 
@@ -216,6 +222,92 @@ the original uncertainty.
 
 The actual clock target is recomputed after preflight and durably saved before
 transmission. If it becomes stale while waiting for storage, it is not sent.
+Readback accounts for elapsed time since the durable send intent and uses a
+three-second tolerance independent of the polling pause. A long pause never makes
+an unchanged or incorrect clock count as a confirmed correction.
+
+### Implemented functions and unverified hardware
+
+| Function | Available implementation | Access and evidence |
+| --- | --- | --- |
+| Profile setting writes | AT and Binary EyeBond, where the profile defines a setter | Available after read verification and profile acceptance; untested model/firmware is not a separate lock |
+| Protocol 4 clock sync | Reference profile and accepted `smg_4`, AT and binary | Enable Automatic clock sync; binary clock tests use synthetic FC16/FC03 exchanges, not a physical clock-write qualification |
+| Other profile clock setters | Not implemented | Observing a clock does not establish a setter; collect a report and protocol reference |
+| Collector reset | AT command | Manual action and optional recovery; binary reset needs a defined command and implementation |
+| Monitoring-only profile controls | No setters in the current map | Fields are not relabeled hardware read-only merely because a setter is missing |
+
+Configuration keeps implemented controls available on hardware-unverified profiles
+under the same identity, encoding, baseline and readback checks. The existing profile
+acceptance explains inferred compatibility. Use **Collect compatibility report** to
+share the model, firmware, action, result and an independent display reading. Reports
+are not automatically uploaded. Do not reapply a write while its result is unresolved.
+
+## Local incident black box and manual support reports
+
+Open **Activity → Local incident black box**, or **Diagnostics: local incidents and
+manual reports** in the compatibility tools. This works for recognized inverters as
+well as bridge/pre-enrollment failures. Recording is enabled locally by default;
+**Enable local incident recording → Save incident recording** can turn it off.
+The save button is on its own row below the checkbox, including when no incidents
+remain. **Saved state** shows whether recording is actually enabled on the server;
+changing the checkbox alone creates an **Unsaved change** until Save is pressed.
+
+The recorder observes existing communication only. It never starts polling, changes
+a connection, tries an unknown command, repeats a write or uploads a report.
+It keeps a rolling **60-second** prelude, then retains **10 seconds** after a failure.
+Samples, counters and watches survive a Home Assistant restart. The rolling buffer
+itself is memory-only. An interrupted or truncated sample is marked incomplete.
+
+Repeated failures share a fingerprint and counters instead of generating an archive
+each time. Per device/problem, up to three samples retain the first failure, recovery
+and a changed structure or explicitly watched failure. An explicit watch replaces
+the auxiliary sample, not the original first/recovery evidence. Limits are **32
+device/problem groups**, **16 MiB serialized samples**, and **512 KiB / 2048 events**
+in the rolling buffer. Database/WAL overhead is separate. Eviction and dropped-event
+counters are visible. A storage failure is shown without recursively logging itself.
+
+### Catch a rare failure
+
+1. Choose **Catch next failure** and a duration of **1–24 hours**.
+2. Continue using the inverter normally. A watch does not enable Collect readings
+   or send test commands. It can capture the next fault while normal recording is off.
+3. Return to Activity after the fault. The watch shows captured, expired or cancelled.
+4. Open the incident and prepare a manual export.
+
+### Share useful evidence without duplicate issues
+
+Each card shows its fingerprint, occurrences, recovery count, retained samples and
+local known-symptom guidance. An empty reply followed by a successful full poll is
+a known recovered event; it does not raise a push notification. Unknown responses
+and unrecovered failures remain visible. A successful poll does not resolve an
+uncertain setting operation.
+
+**Search existing GitHub issues** opens a fingerprint/code search only when clicked.
+The bundled catalogue distinguishes known handled behavior, known symptoms and
+unclassified incidents; it does not claim that a root cause or released fix is known
+when it is not. If a matching issue exists, use it instead of creating duplicates.
+Different firmware or a different result can justify a new sample in that issue.
+
+**Download incident ZIP** is sanitized by default. For byte-level analysis, explicitly
+select **Include raw protocol exchange in the next incident export**. Original bytes
+may contain hardware identities or network settings. The choice resets after export
+or page reload. Review the optional description and archive before manually sharing.
+Nothing is sent to GitHub or a support service automatically. **Delete local evidence**
+removes the selected stored group; previously downloaded files remain independent.
+
+### Report successful compatibility or missing support
+
+Use **User compatibility feedback** for the model, firmware and a specific feature
+such as `telemetry`, `clock_sync`, or `setting.lcd_backlight`. Choose **Working**,
+**Not working**, or **Unknown**, add a comment, and download the report. These are
+user-reported results, not automatic hardware qualification. An unverified model
+alone never raises a fault or prompts repeated reports. A function with no implemented
+wire command needs a protocol reference or an authorized capture of the vendor's
+tool; the recorder cannot discover that command by sending guesses.
+
+The existing two-minute **Start collection / Download compatibility ZIP** tool is
+still available for a deliberate live capture. Its in-memory result expires after
+15 minutes; saved incident samples use the persistent bounds above instead.
 
 ## Remove an inverter
 
@@ -345,12 +437,13 @@ Additional Modbus/PI30/PI18/G-ASCII profiles are source-derived
 and simulator-tested, without new local hardware qualification. The original exact
 gate remains 4/32771. Other profiles are offered after read-based recognition and
 require explicit acceptance. The profile warning/acceptance covers implemented
-source-defined controls, including on binary FC4. Binary clock/reset remain
-unsupported; AT reference control remains available under its existing guards.
+source-defined controls, including on binary FC4. Protocol 4 clock sync is implemented
+on both transports; binary collector reset remains unimplemented.
 
 See `docs/verification/README.md` in the source repository for the dated evidence summary.
 A 24-hour run on an unchanged candidate and broader hardware qualification remain
-separate qualification work. Public development source is not a published stable release.
+separate qualification work. A release number does not establish hardware support
+for every source-derived profile or eliminate the documented intermittent timeouts.
 Configure DNS and any necessary TCP routing using the
 [bundled router guide](../custom_components/solar_inverter_bridge/frontend/routers.html),
 also linked from Add inverter. See [DNS and routing](PROTOCOLS_AND_PROFILES.md#3-dns-and-routing).
@@ -407,8 +500,12 @@ read back, not optimistically set. Supported controls need no unlock step. Missi
 readings, unsupported transport writes or changed profile evidence can still make
 controls unavailable. Inferred profiles require explicit profile acceptance; only
 their own fields/entities are created. Maintenance preferences stay configurable;
-the panel explains that binary clock writes and recovery are paused. Use the Bridge
+the panel distinguishes missing commands from a temporarily unqualified session. Use the Bridge
 panel to inspect all parameter readings even when editing is blocked.
+Full settings must belong to the current verified session and remain within their
+TTL. A fresh single-field readback makes only that field current. Native controls
+become unavailable on disconnect, session change, expiry, pause or an unresolved
+operation; retained values are shown as last known in the panel.
 Undocumented numeric bounds represent wire format only. The number entity for full
 recovery uses 0 for that special value.
 Hardware read-only fields are not writable controls. Date/time correction stays

@@ -340,12 +340,12 @@ class BinaryTransport:
         await self.request(1, heartbeat_payload(datetime.now(timezone.utc)), (0, 1))
 
     async def exchange_inverter(self, request, timeout=5):
-        # Initial binary milestone intentionally has no write implementation.
+        # Read-only retry path. Writes use the durable executor's single request.
         if len(request) < 2 or request[1] not in (3,4):
             raise ValueError("transport_write_unsupported")
-        # The reference callback answers a busy inverter with a complete 8-byte
-        # header and no inner bytes. That frame is aligned, so retry it here
-        # instead of treating the socket as corrupt.
+        # A complete envelope with no inner bytes is aligned. Its cause (including
+        # a possibly busy inverter) needs wire evidence; never infer it from the
+        # received-byte counter alone. Retry only these correlated empty reads.
         deadline = monotonic() + timeout
         for attempt in range(3):
             remaining = deadline - monotonic()
@@ -354,7 +354,9 @@ class BinaryTransport:
             payload = await self.request(4, request, timeout=remaining)
             if payload:
                 return payload
-            self.emit("empty_inverter_reply", attempt=attempt + 1)
+            self.emit("empty_inverter_reply", attempt=attempt + 1, function=request[1],
+                      register_address=int.from_bytes(request[2:4], "big"),
+                      register_count=int.from_bytes(request[4:6], "big"), payload_length=0)
             if attempt < 2 and deadline - monotonic() > 0.3:
                 await asyncio.sleep(0.2)
         error = ValueError("binary_empty_inverter_reply")

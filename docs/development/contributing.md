@@ -70,6 +70,6 @@ Only run packaging when requested or when the applicable task permits it.
 Publication requires explicit authorization and a reviewed source tree. Follow
 [documentation policy](documentation-policy.md).
 
-GitHub/HACS metadata, release checks and the mandatory pre-release documentation
+GitHub/HACS metadata, release checks and the mandatory documentation
 review are described in [publication](publication.md).
 Default CI runs build-free tests; packaging and publication remain explicit steps.

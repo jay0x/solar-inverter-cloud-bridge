@@ -8,10 +8,11 @@ connection to Home Assistant. The integration handles inverter communication loc
 - Native controls for supported inverter settings, with independent readback.
 - A bundled **Inverters** panel with live readings, settings, history and diagnostics.
 - Read-based protocol recognition and compatibility reports for unlisted devices.
+- A local incident black box with grouped failures, retained protocol samples and
+  manual report sharing, including for already recognized inverters.
 
 Runs inside Home Assistant Core without a separate app, MQTT broker or vendor-cloud
-account. Current source candidate: **0.9.0**. Check release notes for the capabilities
-of a tagged release. Available as a HACS custom repository;
+account. Release: **1.0.0**, with panel **0.24.0**. Available as a HACS custom repository;
 default-catalog inclusion requires approval by the HACS maintainers.
 
 ## Inverter models
@@ -76,8 +77,8 @@ by profile and firmware; some profiles provide monitoring only. See the
 Intermittent polling timeouts and occasional incomplete callback frames have been
 observed on the reference installation. Readings can recover, but the cause and
 long-term reliability are still under investigation. Additional profiles are
-experimental and require device-specific verification. This pre-release does not
-claim fault-free continuous operation. A callback does not coordinate another Home
+experimental and require device-specific verification. The hardware evidence does
+not establish fault-free continuous operation. A callback does not coordinate another Home
 Assistant instance or a vendor cloud; keep one active controller.
 
 ## Install through HACS
@@ -86,9 +87,12 @@ Add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
 repositories**, category **Integration**, then download **Solar Inverter Cloud
 Bridge** and restart Home Assistant. Add the integration from **Settings → Devices
 & services**. The integration domain is `solar_inverter_bridge`.
-To select the `v0.9.0` pre-release, enable beta versions for the repository in HACS.
+Select **v1.0.0**; beta versions are not required for this release.
 See [installation and collector setup](docs/INSTALL.md) before connecting a device.
 The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
+Home Assistant 2026.11 introduces the built-in Marketplace using the same repository
+catalog and `hacs.json`. Default-catalog inclusion is still pending; a GitHub release
+alone does not add the repository to that catalog.
 
 ## Redirect the collector to Home Assistant
 

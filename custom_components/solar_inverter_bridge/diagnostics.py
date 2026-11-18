@@ -10,7 +10,7 @@ from .const import DOMAIN
 from .core.identity import peer_allowed
 from .core.observations import TELEMETRY_TTL_SECONDS
 from .core.parameters import FIELDS, inventory
-from .core.policy import MIN_CLOCK_CORRECTION_SECONDS
+from .core.policy import CLOCK_READBACK_TOLERANCE_SECONDS, MIN_CLOCK_CORRECTION_SECONDS
 from .core.artifact import artifact_metadata
 
 
@@ -65,22 +65,28 @@ async def async_get_config_entry_diagnostics(hass, entry):
                           "profile_acceptance": device.get("profile_acceptance"),
                           "profile_layers": device.get("profile_layers"),
                         "native_identity": service.native_identity.get(identifier),
-                        "configuration": {key: device[key] for key in ("control_mode", "clock_sync", "enabled", "poll_interval", "policy_revision")},
+                         "configuration": {key: device[key] for key in ("control_mode", "clock_sync", "auto_reset", "enabled", "poll_interval", "policy_revision")},
                          "connection": {"connected": device["connected"], "channels": channels,
                                         "transport": device.get("transport"), "route": device.get("route")},
                          "capabilities": device.get("capabilities"), "capability_reason": device.get("capability_reason"),
                         "telemetry": {"available": device["enabled"] and not device["stale"], "observed_at": device["observed_at"], "age_seconds": device["age_seconds"],
-                                      "values": observation.values if observation else None},
-                        "parameters": {"available": device["settings_available"], "observed_at": service.settings_observed_at.get(identifier), "values": device["settings"], "raw_register_values": raw_values, "individual_readbacks": service.parameter_readbacks.get(identifier, {})},
+                                       "ttl_seconds": device["telemetry_ttl_seconds"], "values": observation.values if observation else None},
+                         "parameter_inventory": list(inventory(fields)),
+                         "parameters": {"available": device["settings_available"], "observed_at": service.settings_observed_at.get(identifier),
+                                        "current_session": device["settings_current_session"], "age_seconds": device["settings_age_seconds"],
+                                        "ttl_seconds": device["settings_ttl_seconds"], "blocked_reason": device["settings_blocked_reason"],
+                                        "field_freshness": device["parameter_freshness"], "values": device["settings"],
+                                        "raw_register_values": raw_values, "individual_readbacks": service.parameter_readbacks.get(identifier, {})},
                          "polling": {"completed_snapshots": service.poll_cycles[identifier], "last_duration_ms": service.poll_duration_ms.get(identifier),
                                      "error_count_total": service.poll_errors[identifier],
                                     "failure_count": service._failures.get(identifier, 0), "backoff_seconds": device["poll_backoff_seconds"]},
                         "ha_sensors": sensors, "recent_operations": operations, "unresolved_count": device["unresolved"]})
-    issues = [{**{key: value for key, value in event.items() if key not in ("device_id", "runtime_id")},
+    issues = [{**{key: value for key, value in event.items() if key not in ("device_id", "runtime_id", "payload_hex")},
                "device_ref": references.get(event.get("device_id"), "bridge_or_removed_device"),
                "previous_session": event.get("runtime_id") != service.runtime_id} for event in service.issues]
     compatibility = service.compatibility.snapshot(service.listeners)
     compatibility["description"] = {}
+    incidents = service.incidents.view()
     return {
         "schema": 2, "captured_at": datetime.now(timezone.utc).isoformat(),
         "home_assistant": {"version": HA_VERSION, "python": platform.python_version(), "time_zone": hass.config.time_zone},
@@ -89,10 +95,19 @@ async def async_get_config_entry_diagnostics(hass, entry):
                      "listeners": service.listeners, "degraded": state["degraded"],
                     "active_tasks": sum(not task.done() for task in service.tasks), "queued_commands": sum(service._queued.values()),
                     "allowed_source_rules": len(service.sources), "rejected_connections": service.rejected, "admission_counters": dict(service.reject_reasons)},
-        "policy": {"telemetry_ttl_seconds": TELEMETRY_TTL_SECONDS, "minimum_clock_correction_seconds": MIN_CLOCK_CORRECTION_SECONDS},
+        "policy": {"telemetry_grace_seconds": TELEMETRY_TTL_SECONDS, "telemetry_ttl_rule": "60 + poll_interval",
+                   "minimum_clock_correction_seconds": MIN_CLOCK_CORRECTION_SECONDS,
+                   "clock_readback_tolerance_seconds": CLOCK_READBACK_TOLERANCE_SECONDS},
         "storage": await hass.async_add_executor_job(storage.storage_summary),
+        "parameter_inventory_profile": "modbus_protocol_4",
         "parameter_inventory": list(inventory()), "devices": devices, "recent_issues": issues,
         "compatibility": compatibility,
+        "incident_recording": {"enabled": incidents["enabled"], "limits": incidents["limits"],
+                               "problem_count": len(incidents["incidents"]),
+                               "needs_attention": sum(item["needs_attention"] for item in incidents["incidents"]),
+                               "serialized_sample_bytes": incidents["serialized_sample_bytes"],
+                               "dropped_events": incidents["dropped_events"], "evicted_incidents": incidents["evicted_incidents"],
+                               "persistence": incidents["persistence"], "persistence_error": incidents["persistence_error"]},
         "profile_discovery": [{"reference":f"candidate_{index+1}",**{key:value for key,value in search.items() if key!="collector_sha256"}}
                               for index,search in enumerate(state.get("profile_searches",[]))],
         "redaction": "Names, source IPs, collector identities, device/operation IDs, credentials, paths, and raw frames are omitted.",

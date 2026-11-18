@@ -1,7 +1,7 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Current source candidate: integration 0.9.0 / panel 0.22.0. Checks and hardware qualification
+Release: integration 1.0.0 / panel 0.24.0. Checks and hardware qualification
 are described in `docs/verification/README.md` in the source repository.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native
@@ -10,10 +10,11 @@ pre-enrollment compatibility collection, recognition, local analysis and offline
 replay. Additional profiles are offered for explicit user acceptance after two
 plausible snapshots. Unknown model names are not rejected merely for being absent
 from a catalog. See [the complete profile/measurement/control matrix](PROFILE_EXPANSION.md).
-Binary and additional-family evidence is **source-derived and simulator-tested**,
-not new hardware verification. Inferred profiles may use implemented source-defined
-controls after the user accepts the profile warning. Binary collector
-reset/management and inverter clock writes remain separately unavailable.
+The reference binary callback has hardware reading and display-setting write
+evidence. Additional families are **source-derived and simulator-tested**, not
+independently hardware-qualified. Inferred profiles may use implemented controls
+after profile acceptance. Protocol 4 clock writes are implemented on AT and binary;
+binary collector reset and arbitrary collector-configuration writes are not implemented.
 
 Read the release's own status before configuring a newly documented capability.
 A protocol described below is not automatically supported by the installed build.
@@ -148,9 +149,11 @@ carry PI30 or G-ASCII. The selected profile determines the inverter payload deco
 
 The implementation is independently written from attributed community wire facts.
 It is not a complete manufacturer specification. On the reference Wi-Fi.DTU, binary
-callback readings and qualified inverter writes, including the same path used for
-clock correction, have been verified. Collector module reset remains an AT command
-and is not available on a binary session.
+callback readings and reversible display-setting writes have been verified. Protocol 4
+clock correction uses the same FC16 transport, but its clock-specific readback is
+tested synthetically; this does not establish a physical clock-write qualification.
+Collector module reset is implemented as an AT command, with no binary equivalent
+implemented in this project.
 
 ### Envelope
 
@@ -230,8 +233,11 @@ candidates, with slaves 1 and 5. There are at most six candidates within the sam
 15 s budget. Native replies must match TID, function and route exactly and pass
 CRC, slave and profile checks. One route and inverter per collector are supported.
 TIDs are not reused: the session closes before 16-bit wrap and waits for the
-collector to reconnect. An empty binary FC4 reply is a complete 8-byte header with no inner bytes. It is
-retried and does not close the callback session. Callback heartbeat scheduling is
+collector to reconnect. A validated empty binary FC4 reply is a complete 8-byte header
+with no inner bytes. Empty read replies are retried within the existing deadline;
+write commands are not replayed. A received-byte counter of eight alone does not
+prove this wire shape or its cause: capture length/TID/route/function to establish it.
+Callback heartbeat scheduling is
 capped at 20 s, while the binary heartbeat payload retains its interval value of 60 s. Heartbeat time
 fields are collector liveness, not inverter clock-register writes.
 
@@ -322,8 +328,9 @@ Effective editability intersects current-session evidence, implemented commands
 and saved profile permission. The binary 32771 reference supports implemented
 Protocol 4 setting writes after current-session qualification; accepted profiles expose source-defined controls
 after the warning. Permission is bound to the profile definition digest/signature/
-route; it survives restart but is not silently carried to changed evidence. Binary
-clock writes and module reset remain unsupported. Possible-send failures remain unresolved;
+route; it survives restart but is not silently carried to changed evidence. Protocol 4
+clock writes use the qualified executor on both transports; binary module reset is
+not implemented. Possible-send failures remain unresolved;
 reconnect does not replay the command. An outer binary ACK alone does not prove an
 inverter setting changed.
 
