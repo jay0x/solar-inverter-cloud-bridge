@@ -85,12 +85,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._routerHints?.[key]) hints.set(key, this._routerHints[key]);
     }
     hints.set("addresses", JSON.stringify(this._routerHints?.addresses || []));
-    return "/solar_inverter_bridge/routers.html?v=0.24.0#" + hints.toString();
+    return "/solar_inverter_bridge/routers.html?v=0.25.0#" + hints.toString();
   }
 
   async _loadCollectorDomains() {
     try {
-      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.24.0");
+      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.25.0");
       if (!response.ok) throw new Error("Domain catalogue unavailable");
       this._collectorDomains = await response.json();
     } catch (_) {
@@ -354,13 +354,14 @@ class SolarInverterBridgePanel extends HTMLElement {
 
   _render() {
     const focusedDisclosure = this.querySelector('details[data-disclosure] > summary:focus')?.parentElement.dataset.disclosure;
+    const focusedReading = this.querySelector('button.reading-link:focus')?.dataset.value;
     const status = this._status || {devices: [], candidates: [], parameters: []};
     const devices = status.devices || [];
     const selected = this._device && devices.find(item => item.device_id === this._device);
     const body = !this._status ? '<section class="empty-state"><h2>Connecting to your bridge…</h2><p>Reading the saved devices and their latest measurements.</p></section>' : this._wizard ? this._wizardView(status) : selected ? this._deviceView(selected, status) : this._home(status);
     const firstSetup = !selected && !devices.length;
     const support = this._wizard ? "" : firstSetup ? this._disclosure("home-help", "Connection help and diagnostics", this._compatibilityView(status, false), this._reportOpen) : this._compatibilityView(status);
-    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.24.0"><div class="sib"></div>`;
+    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.25.0"><div class="sib"></div>`;
     this.querySelector(".sib").innerHTML = `<header class="appbar"><button class="icon-button" aria-label="Open Home Assistant menu" data-action="menu">${this._icon("menu")}</button>
       <img class="brand-logo" src="/solar_inverter_bridge/icon.png" srcset="/solar_inverter_bridge/icon@2x.png 2x" width="32" height="32" alt=""><span class="brand">Solar Inverter Cloud Bridge</span><span class="local-label">Local connection</span></header>
       <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || this._error ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
@@ -374,6 +375,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._busy) button.disabled = true;
       button.onclick = () => this._action(button.dataset.action, button.dataset.value, button.dataset.device);
     });
+    if (focusedReading) [...this.querySelectorAll('button.reading-link')].find(button => button.dataset.value === focusedReading)?.focus({preventScroll: true});
     this.querySelectorAll("[data-draft]").forEach(input => {
       if (input.id.startsWith("edit-")) this._updateEditorActions(input, false);
       input.oninput = () => {
@@ -607,9 +609,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     return `<section class="surface"><div class="section-heading"><h2>Sensors</h2><span>${sensors.length} Home Assistant entities</span></div>
       <p>${status.recorder_available ? "Open a sensor's history in Home Assistant. Recorder provides the graph according to your recording and retention settings." : "Current Home Assistant sensor values. Enable Recorder in Home Assistant to record history."}</p>
       ${sensors.length ? `<div class="sensor-list">${sensors.map(sensor => {
-        const prefix = device.name || "";
-        const remainder = prefix && sensor.name.startsWith(prefix) ? sensor.name.slice(prefix.length) : "";
-        const name = /^[\s:·–—-]/.test(remainder) ? remainder.replace(/^[\s:·–—-]+/, "") || sensor.name : sensor.name;
+        const name = this._sensorName(device, sensor);
         const unavailable = ["unavailable", "unknown"].includes(sensor.state);
         const value = sensor.disabled ? "Disabled in Home Assistant" : unavailable ? this._valueLabel(sensor.state) : `${this._valueLabel(sensor.state)}${sensor.unit ? " " + sensor.unit : ""}`;
         return `<div class="sensor-row"><div><strong>${this._escape(name)}</strong><small>${this._escape(sensor.entity_id)}</small></div><span class="sensor-reading">${this._escape(value)}</span><button data-action="sensor-history" data-device="${device.device_id}" data-value="${this._escape(sensor.entity_id)}" aria-label="${status.recorder_available ? "History" : "Details"}: ${this._escape(name)}" ${sensor.has_state ? "" : "disabled"}>${status.recorder_available ? "History" : "Details"}</button></div>`;
@@ -660,18 +660,33 @@ class SolarInverterBridgePanel extends HTMLElement {
     return `<span class="status-chip ${fresh ? "healthy" : "muted"}"><i class="status-dot ${fresh ? "online" : ""}"></i>${label}</span>`;
   }
 
-  _metric(device, key, label, icon) {
+  _sensorName(device, sensor) {
+    const name = sensor.name || sensor.entity_id;
+    const prefix = device.name || "";
+    const remainder = prefix && name.startsWith(prefix) ? name.slice(prefix.length) : "";
+    return /^[\s:·–—-]/.test(remainder) ? remainder.replace(/^[\s:·–—-]+/, "") || name : name;
+  }
+
+  _historyReading(device, key, label, content, classes, sensor = null) {
+    sensor ||= (device.ha_sensors || []).find(item => item.key === key);
+    if (!sensor?.has_state) return `<div class="${classes}" title="History is unavailable until Home Assistant registers an active sensor state.">${content}</div>`;
+    const action = this._status?.recorder_available ? "History" : "Details";
+    return `<button class="${classes} reading-link" data-action="sensor-history" data-device="${this._escape(device.device_id)}" data-value="${this._escape(sensor.entity_id)}" aria-label="${action}: ${this._escape(label)}" title="${action}: ${this._escape(label)}">${content}</button>`;
+  }
+
+  _metric(device, key, label, icon, interactive = false) {
     const reading = device.stale || device.enabled === false ? null : device.telemetry?.[key];
     let value = reading?.value;
     let unit = reading?.unit || "";
     if (typeof value === "number" && unit === "W" && Math.abs(value) >= 1000) { value /= 1000; unit = "kW"; }
     const formatted = value == null ? "—" : typeof value === "number" ? new Intl.NumberFormat("en-US", {maximumFractionDigits: unit === "kW" ? 2 : 1}).format(value) : this._valueLabel(value);
-    return `<div class="metric"><span class="metric-label">${this._icon(icon)}${label}</span><div class="metric-value">${this._escape(formatted)}<span>${value == null ? "" : this._escape(unit)}</span></div>
-      ${key === "battery_soc" && typeof value === "number" ? `<meter min="0" max="100" value="${value}" aria-label="Battery charge">${value}%</meter>` : ""}</div>`;
+    const content = `<span class="metric-label">${this._icon(icon)}${this._escape(label)}</span><span class="metric-value">${this._escape(formatted)}<span>${value == null ? "" : this._escape(unit)}</span></span>
+      ${key === "battery_soc" && typeof value === "number" ? `<meter min="0" max="100" value="${value}" aria-label="Battery charge">${value}%</meter>` : ""}`;
+    return interactive ? this._historyReading(device, key, label, content, "metric") : `<div class="metric">${content}</div>`;
   }
 
-  _powerMetrics(device) {
-    return `<div class="overview-metrics">${this._metric(device, "pv_power", "Solar generation", "sun")}${this._metric(device, "battery_soc", "Battery charge", "battery")}${this._metric(device, "output_power", ["smg_3","smg_5"].includes(device.profile_id) ? "Output load L1" : "Output load", "home")}${this._metric(device, "operating_mode", "Operating mode", "inverter")}</div>`;
+  _powerMetrics(device, interactive = false) {
+    return `<div class="overview-metrics">${this._metric(device, "pv_power", "Solar generation", "sun", interactive)}${this._metric(device, "battery_soc", "Battery charge", "battery", interactive)}${this._metric(device, "output_power", ["smg_3","smg_5"].includes(device.profile_id) ? "Output load L1" : "Output load", "home", interactive)}${this._metric(device, "operating_mode", "Operating mode", "inverter", interactive)}</div>`;
   }
 
   _modeSummary(device, action = "open") {
@@ -679,20 +694,25 @@ class SolarInverterBridgePanel extends HTMLElement {
   }
 
   _overviewView(device) {
+    const glance = [["grid_voltage", device.measurement_labels?.grid_voltage || "Grid voltage"],
+                    ["battery_voltage", "Battery voltage"], ["pv_energy_today", "PV energy today"],
+                    ["output_frequency", "Output frequency"]];
+    const diagnostics = (device.ha_sensors || []).filter(sensor => sensor.entity_category === "diagnostic"
+      && sensor.key && !glance.some(([key]) => key === sensor.key));
+    const row = (key, label, sensor = null) => this._historyReading(device, key, label,
+      `<span>${this._escape(label)}</span><strong>${this._reading(device, key)}</strong>`, "detail-row", sensor);
     return `${device.stale || !device.connected ? `<div class="banner attention">${this._icon("info")}<span>${device.connected ? "Waiting for a complete reading. Old values are not shown as current." : "The collector is offline. Your inverter keeps its own settings. Check the local connection to restore live readings."}</span><button class="text-button" data-action="tab" data-value="connection" data-device="${device.device_id}">View connection</button></div>` : ""}
-      <section class="live-panel"><div class="section-heading"><h2>Live power</h2><span>${this._age(device)}</span></div>${this._powerMetrics(device)}</section>
+      <section class="live-panel"><div class="section-heading"><h2>Live power</h2><span>${this._age(device)}</span></div>${this._powerMetrics(device, true)}</section>
       <div class="two-column"><section class="surface"><div class="section-heading"><h2>At a glance</h2></div>
-      <div class="detail-row"><span>${this._escape(device.measurement_labels?.grid_voltage || "Grid voltage")}</span><strong>${this._reading(device, "grid_voltage")}</strong></div>
-      <div class="detail-row"><span>Battery voltage</span><strong>${this._reading(device, "battery_voltage")}</strong></div>
-      <div class="detail-row"><span>PV energy today</span><strong>${this._reading(device, "pv_energy_today")}</strong></div>
-      <div class="detail-row"><span>Output frequency</span><strong>${this._reading(device, "output_frequency")}</strong></div></section>
+       ${glance.map(([key, label]) => row(key, label)).join("")}
+       ${diagnostics.length ? `<h3 class="overview-diagnostics-title">Diagnostics</h3>${diagnostics.map(sensor => row(sensor.key, this._sensorName(device, sensor), sensor)).join("")}` : ""}</section>
       <section class="surface access-summary">${this._modeSummary(device, "tab")}</section></div>
       ${this._operationView(device.device_id)}`;
   }
 
   _reading(device, key) {
     const reading = device.stale || device.enabled === false ? null : device.telemetry?.[key];
-    return reading?.value == null ? "—" : `${this._escape(reading.value)} <span class="unit">${this._escape(reading.unit || "")}</span>`;
+    return reading?.value == null ? "—" : `${this._escape(this._valueLabel(reading.value))} <span class="unit">${this._escape(reading.unit || "")}</span>`;
   }
 
   _connectionView(device, status) {
@@ -1169,7 +1189,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "journal") return this._downloadJournal();
     if (action === "download") {
       return this._call({type: "solar_inverter_bridge/diagnostics"}, diagnostic => {
-        diagnostic.frontend = {version: "0.24.0", view: this._tab};
+        diagnostic.frontend = {version: "0.25.0", view: this._tab};
         const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostic, null, 2)], {type: "application/json"}));
         const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-diagnostics.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);

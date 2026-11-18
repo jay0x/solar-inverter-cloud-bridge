@@ -88,7 +88,7 @@
 .sib .metric { min-width: 0; }
 .sib .metric-label { color: var(--sib-muted); font-size: 12px; display: flex; align-items: center; gap: 7px; }
 .sib .metric-label svg { width: 17px; height: 17px; }
-.sib .metric-value { font-size: 32px; line-height: 1.3; font-weight: 600; letter-spacing: -.8px; margin-top: 9px; overflow-wrap: anywhere; }
+.sib .metric-value { display: block; font-size: 32px; line-height: 1.3; font-weight: 600; letter-spacing: -.8px; margin-top: 9px; overflow-wrap: anywhere; }
 .sib .metric-value > span { font-size: 15px; margin-left: 5px; font-weight: 400; letter-spacing: 0; color: var(--sib-muted); }
 .sib meter { display: block; width: min(100%, 120px); height: 6px; margin-top: 10px; appearance: none; border: none; border-radius: 4px; background: var(--sib-line); }
 .sib meter::-webkit-meter-bar { background: var(--sib-line); border: 0; border-radius: 4px; }
@@ -96,7 +96,11 @@
 .sib .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px; border-top: 1px solid var(--sib-line); background: color-mix(in srgb, var(--sib-bg) 55%, var(--sib-surface)); }
 .sib .subsection { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--sib-line); }
 .sib .surface > h2, .sib .subsection > h3 { margin-bottom: 8px; }
+.sib .surface > h3 { margin-bottom: 8px; }
 .sib .surface > h2 + p, .sib .subsection > h3 + p, .sib .subsection > p { margin-bottom: 16px; }
+.sib .surface > h3 + p { margin-bottom: 16px; }
+.sib .surface > p:has(+ :is(button, .actions)), .sib .disclosure-body > p:has(+ button) { margin-bottom: 0; }
+.sib .surface > p + :is(button, .actions), .sib .disclosure-body > p + button { margin-top: 16px; }
 .sib .subsection .field-label { margin-top: 0; }
 .sib .field-help + .field-help { margin-top: 0; }
 .sib .two-column > .surface { margin-bottom: 0; }
@@ -164,8 +168,13 @@
 .sib .detail-row > span, .sib .review-row > span { color: var(--sib-muted); }
 .sib .detail-row strong, .sib .review-row strong { text-align: right; font-weight: 550; overflow-wrap: anywhere; min-width: 0; }
 .sib .unit { font-weight: 400; color: var(--sib-muted); }
-.sib .access-summary h2 { margin-top: 14px; }
-.sib .access-summary p { margin: 8px 0 20px; }
+.sib .access-summary { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 16px; align-content: start; align-items: start; align-self: start; }
+.sib .access-summary > button { grid-column: 2; justify-self: start; max-width: 100%; white-space: normal; }
+.sib button.metric.reading-link { display: block; width: 100%; min-width: 0; text-align: left; padding: 12px; border: 1px solid var(--sib-line); background: var(--sib-surface); }
+.sib button.detail-row.reading-link { display: flex; width: 100%; padding: 14px 0; border: 0; border-bottom: 1px solid var(--sib-line); border-radius: 0; text-align: left; font-size: 14px; font-weight: 400; }
+.sib button.detail-row.reading-link:last-child { border-bottom: 0; }
+.sib button.reading-link:hover { background: var(--sib-tint); }
+.sib .overview-diagnostics-title { margin: 20px 0 0; }
 .sib .access-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; padding: 26px; margin-bottom: 24px; }
 .sib .access-panel h2 { margin: 8px 0; }
 .sib .access-panel p { font-size: 13px; }

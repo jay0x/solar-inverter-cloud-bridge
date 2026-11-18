@@ -9,16 +9,16 @@ const {chromium} = require("playwright");
 const root = path.resolve(__dirname, "..");
 const frontend = path.join(root, "custom_components/solar_inverter_bridge/frontend");
 const parameters = JSON.parse(execFileSync("python3", ["-c", "import json; from custom_components.solar_inverter_bridge.core.parameters import inventory; print(json.dumps(inventory()))"], {cwd: root, encoding: "utf8"}));
-const profileParameters = JSON.parse(execFileSync("python3", ["-c", "import json; from custom_components.solar_inverter_bridge.core.drivers import fields_for; from custom_components.solar_inverter_bridge.core.parameters import inventory; print(json.dumps({key:inventory(fields_for(key)) for key in ('modbus_protocol_4','smg_4','must_pv3300')}))"], {cwd: root, encoding: "utf8"}));
+const profileParameters = JSON.parse(execFileSync("python3", ["-c", "import json; from custom_components.solar_inverter_bridge.core.drivers import fields_for; from custom_components.solar_inverter_bridge.core.parameters import inventory; print(json.dumps({key:inventory(fields_for(key)) for key in ('modbus_protocol_4','smg_4','must_pv3300','smg_legacy','pi30','pi18','deye_lv','hopewind_0237')}))"], {cwd: root, encoding: "utf8"}));
 const profileLayers = JSON.parse(execFileSync("python3", ["-c", "import json; from custom_components.solar_inverter_bridge.core.profile_layers import describe_profile as d; print(json.dumps({'reference':d('modbus_protocol_4',identity={'protocol_number':4,'model_code':32771},evidence='observed'),'unknown':d('smg_4',binding={'signature':[4,45678]},basis='family_shape_and_two_snapshots',evidence='proposal'),'pi30':d('pi30',basis='family_shape_and_two_snapshots',evidence='proposal'),'must':d('must_pv3300',binding={'signature':[[20000,20566],[20001,3300]]},basis='source_identity_anchors_and_two_snapshots',evidence='proposal')}))"], {cwd: root, encoding: "utf8"}));
 const fixture = {
   listening: true, recorder_available: true, rejected: 0, last_error: null, allowed_sources: ["192.168.10.0/24"], pending: [], parameters,
   devices: [{device_id: "test-device", ha_device_id: "native-ha-device", name: "House inverter", profile_id: "modbus_protocol_4", control_mode: "full", clock_sync: false,
     profile_layers: profileLayers.reference,
     enabled: true, poll_interval: 10, connected: true, stale: false, age_seconds: 3, unresolved: 0,
-    ha_sensors: [{entity_id:'sensor.renamed_roof_pv',name:'House inverter PV power',state:'2460',unit:'W',has_state:true,disabled:false},
-      {entity_id:'sensor.grid_voltage',name:'Grid voltage',state:'unavailable',unit:'V',has_state:true,disabled:false},
-      {entity_id:'sensor.disabled_measurement',name:'Disabled measurement',state:'unavailable',has_state:false,disabled:true}],
+    ha_sensors: [{key:'pv_power',entity_id:'sensor.renamed_roof_pv',name:'House inverter PV power',state:'2460',unit:'W',has_state:true,disabled:false},
+      {key:'grid_voltage',entity_id:'sensor.grid_voltage',name:'Grid voltage',state:'unavailable',unit:'V',has_state:true,disabled:false},
+      {key:'inverter_temperature',entity_id:'sensor.disabled_measurement',entity_category:'diagnostic',name:'Disabled measurement',state:'unavailable',has_state:false,disabled:true}],
     settings: {primary_output_priority: "sbu", output_voltage_setting: "230", secondary_charging_start: "07:00:00", battery_protection_soc_ac: 20,
       battery_recovery_soc_ac: 80, inverter_datetime: "2026-11-02T15:00:00",
       maximum_charging_current: 50, maximum_ac_charging_current: 20.4, equalization_voltage: 57.6,
@@ -33,6 +33,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
 window.state = ${JSON.stringify(fixture)}; window.calls = []; window.operations = {}; window.loseReply = false;
 window.deviceTemplate = structuredClone(state.devices[0]); window.holdVerification = false;
 window.profileLayerFixtures = ${JSON.stringify(profileLayers)};
+window.profileParameterFixtures = ${JSON.stringify(profileParameters)};
 // This mock is server-owned state: UI draft storage must not reconstruct its settings,
 // watch or evidence after a reload. Tests can replace the panel without resetting it.
 window.incidentBackend = JSON.parse(sessionStorage.getItem('mock-incident-backend') || 'null') || {
@@ -287,7 +288,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(diagnostic.schema,2);
     assert.equal(diagnostic.parameter_inventory.length,51);
     assert.equal(diagnostic.recent_issues[0].register_address,630);
-    assert.equal(diagnostic.frontend.version,'0.24.0');
+    assert.equal(diagnostic.frontend.version,'0.25.0');
     console.log('PASS timestamped issue in HA time zone and backend diagnostics download');
 
     await page.evaluate(() => window.testPanel._navigate("sib/device/test-device/settings"));
@@ -477,10 +478,22 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
           assert.deepEqual(spacing.gaps, [], `uneven spacing on ${route} at ${width}`);
           assert.equal(spacing.reconnect, false);
           if (route.endsWith("/connection")) assert.equal(spacing.readingLine, "0px");
+          if (route.endsWith('/overview')) {
+            const gaps=await page.locator('.access-summary').evaluate(section=>{
+              const text=section.querySelector('.card-subtitle').getBoundingClientRect();
+              const button=section.querySelector('button').getBoundingClientRect();
+              const box=section.getBoundingClientRect();
+              return {vertical:button.top-text.bottom,contained:button.right<=box.right && button.left>=box.left};
+            });
+            assert(gaps.vertical>=15.5 && gaps.vertical<=24,`Configuration button spacing at ${width}: ${gaps.vertical}`);
+            assert(gaps.contained);
+          }
           if (route.endsWith('/settings')) {
             const positions=await page.locator('.parameter-control > .value-button strong, .parameter-control > .value-static strong').evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect().x));
             assert(Math.max(...positions)-Math.min(...positions)<1,'parameter values are not aligned');
             assert.equal(await page.locator('.parameter-indicator').count(),51);
+            const actionGaps=await page.locator('.surface > p + button').evaluateAll(buttons=>buttons.filter(b=>b.getClientRects().length).map(button=>button.getBoundingClientRect().top-button.previousElementSibling.getBoundingClientRect().bottom));
+            assert(actionGaps.length>0 && actionGaps.every(gap=>gap>=15.5),`Text-to-action spacing at ${width}: ${actionGaps}`);
           }
         }
         if (width === 390 || width === 1440) {
@@ -511,6 +524,55 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert((await panel().innerText()).includes('Enable Recorder'));
     await page.evaluate(() => {state.recorder_available=true;});
     console.log('PASS Sensors: actual entity IDs, native history event across Shadow DOM, unavailable history and Recorder fallback');
+
+    await page.evaluate(()=>{
+      window.overviewOriginal=structuredClone(state.devices[0]);
+      window.overviewEntities={pv_power:'sensor.renamed_roof_pv',battery_soc:'sensor.renamed_soc',output_power:'sensor.renamed_load',operating_mode:'sensor.mode',
+        grid_voltage:'sensor.grid_voltage',battery_voltage:'sensor.battery_voltage',pv_energy_today:'sensor.pv_today',output_frequency:'sensor.frequency',
+        inverter_temperature:'sensor.renamed_cabinet_temp',dc_temperature:'sensor.dc_temp',pv_temperature:'sensor.pv_temp'};
+      state.devices[0].ha_sensors=Object.entries(overviewEntities).map(([key,entity_id])=>({key,entity_id,name:key==='inverter_temperature'?'House inverter Cabinet temperature':key.replaceAll('_',' '),
+        entity_category:key.endsWith('temperature')?'diagnostic':null,has_state:true,state:'unavailable',disabled:false}));
+      Object.assign(state.devices[0].telemetry,{inverter_temperature:{value:40,unit:'°C'},dc_temperature:{value:41,unit:'°C'},pv_temperature:{value:42,unit:'°C'}});
+      sensorHistoryEvents=[];testPanel._navigate('sib/device/test-device/overview');
+    });
+    await refresh();
+    const historyLabels=['Solar generation','Battery charge','Output load','Operating mode','Grid voltage','Battery voltage','PV energy today','Output frequency','Cabinet temperature','dc temperature','pv temperature'];
+    for (const label of historyLabels) await page.getByRole('button',{name:'History: '+label,exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>sensorHistoryEvents.map(e=>e.entityId)),await page.evaluate(()=>Object.values(overviewEntities)));
+    assert.equal(await page.locator('.live-panel .reading-link').count(),4);
+    assert(await page.getByRole('heading',{name:'Diagnostics',exact:true}).isVisible());
+    assert(!await page.locator('.live-panel').innerText().then(text=>text.includes('History')),'Overview has no separate visible History buttons');
+    for (const width of [360,390,768,1440]) {
+      await page.setViewportSize({width,height:1000});
+      await overflow();
+      if ([390,1440].includes(width)) await page.screenshot({path:path.join(out,`overview-history-${width}.png`),fullPage:true});
+    }
+    await page.getByRole('button',{name:'History: Solar generation',exact:true}).focus();
+    await refresh();
+    assert(await page.getByRole('button',{name:'History: Solar generation',exact:true}).evaluate(e=>e.matches(':focus')),'Overview history focus survives live refresh');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(()=>sensorHistoryEvents.at(-1).entityId),'sensor.renamed_roof_pv');
+    await page.evaluate(()=>{state.devices[0].stale=true;state.devices[0].enabled=false;});
+    await refresh();
+    assert.match(await page.locator('.live-panel').innerText(),/—/);
+    await page.getByRole('button',{name:'History: Solar generation',exact:true}).click();
+    assert.equal(await page.evaluate(()=>sensorHistoryEvents.at(-1).entityId),'sensor.renamed_roof_pv');
+    await page.evaluate(()=>{state.recorder_available=false;state.devices[0].ha_sensors.find(s=>s.key==='pv_temperature').has_state=false;});
+    await refresh();
+    await page.getByRole('button',{name:'Details: Cabinet temperature',exact:true}).click();
+    assert.equal(await page.evaluate(()=>sensorHistoryEvents.at(-1).entityId),'sensor.renamed_cabinet_temp');
+    assert.equal(await page.locator('[data-action="sensor-history"][data-value="sensor.pv_temp"]').count(),0);
+    await page.evaluate(()=>{state.recorder_available=true;testPanel._navigate('sib');});
+    assert.equal(await page.locator('.card-open button').count(),0,'Home cards must not contain nested metric buttons');
+    await page.evaluate(()=>{state.devices[0]=structuredClone(overviewOriginal);testPanel._navigate('sib/device/test-device/settings');});
+    for (const [profile,groups] of Object.entries({smg_legacy:['Output','Battery','Charging','AC input and display'],pi30:['Output','Battery','Charging','AC input and display'],
+      pi18:['Output','Battery','Charging','AC input and display','Energy','System'],deye_lv:['Battery','Charging','Energy','System'],hopewind_0237:['Power regulation']})) {
+      await page.evaluate(profile=>{state.devices[0].profile_id=profile;state.devices[0].parameters=profileParameterFixtures[profile];},profile);
+      await refresh();
+      assert.deepEqual((await page.locator('.parameter-group > .section-heading > h3').allTextContents()).sort(),groups.sort());
+    }
+    await page.evaluate(()=>{state.devices[0]=structuredClone(overviewOriginal);});await refresh();
+    console.log('PASS Overview history by actual entity keys, keyboard/unavailable states, diagnostic sensors and meaningful settings groups across protocols');
 
     await page.evaluate(() => {
       state.devices[0].control_mode = 'full';

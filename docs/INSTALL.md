@@ -1,6 +1,7 @@
 # Install and operate Solar Inverter Cloud Bridge
 
-This guide describes release **1.0.0**, with panel **0.24.0**. The integration runs
+This guide describes source candidate **1.0.1**, with panel **0.25.0**. Check tagged
+release notes for the version available through the store. The integration runs
 inside Home Assistant Core. It does not require a Supervisor app, MQTT, or a separate
 frontend plugin. The current target is Home Assistant Core 2026.10.4.
 
@@ -487,6 +488,20 @@ Recorded data follows your Recorder inclusion and retention configuration. Offli
 sensors can still show previously recorded data. Disabled entities without a live
 HA state are marked as disabled. If Recorder is not loaded, **Details** opens
 the entity dialog and the panel explains that history requires Recorder.
+
+On **Overview**, select a reading in **Live power** or **At a glance** to open the
+same native HA history/details dialog; no separate History button is needed there.
+The links follow the entity registry, including renamed sensors. Missing or disabled
+sensors without an HA state remain noninteractive; existing unavailable sensor states
+can still open recorded history. **At a glance → Diagnostics** includes the device's
+diagnostic-category sensors, such as its inverter, DC and PV temperatures.
+
+Configuration sections apply to every profile with implemented settings. Explicit
+profile groups take precedence; remaining parameters are grouped by their purpose,
+not by a different protocol's register ranges. The actual sections vary: Output,
+Battery, Charging, Grid, Protection, System, Schedules, Generator and others appear
+only where the profile has corresponding fields. Monitoring-only profiles do not
+show empty sections. This presentation does not change profile acceptance or commands.
 
 Open an inverter in the Bridge panel and select **Home Assistant entities** in its
 header. The link opens that inverter's native HA device page, where its sensors and

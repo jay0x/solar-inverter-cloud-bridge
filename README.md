@@ -4,6 +4,18 @@ A Home Assistant integration for monitoring and configuring solar inverters thro
 their Wi-Fi collectors. Request a local callback or redirect the collector's cloud
 connection to Home Assistant. The integration handles inverter communication locally.
 
+## Why keep inverter control local?
+
+The EyeBond AT/binary connections supported by this integration carry telemetry and
+control commands without transport encryption. Someone able to intercept and modify
+that traffic could read your data or inject commands that change inverter settings.
+
+Redirecting the collector's cloud connection to Home Assistant on your LAN reduces
+exposure to external networks and gives you control over your data and inverter.
+Keep the collector ports restricted to your trusted local network.
+
+## Features
+
 - Native sensors for solar generation, battery, grid, load and energy, where available.
 - Native controls for supported inverter settings, with independent readback.
 - A bundled **Inverters** panel with live readings, settings, history and diagnostics.
@@ -12,7 +24,8 @@ connection to Home Assistant. The integration handles inverter communication loc
   manual report sharing, including for already recognized inverters.
 
 Runs inside Home Assistant Core without a separate app, MQTT broker or vendor-cloud
-account. Release: **1.0.0**, with panel **0.24.0**. Available as a HACS custom repository;
+account. Current source candidate: **1.0.1**, with panel **0.25.0**; the latest published
+release is **1.0.0**. Available as a HACS custom repository;
 default-catalog inclusion requires approval by the HACS maintainers.
 
 ## Inverter models
@@ -22,25 +35,24 @@ profile based on reviewed device reports and protocol documentation. **ANENJI
 ANJ-11KW-48V-W-P** has hardware-read verification in this project; the other listed
 models are experimental and require a matching collector and profile check.
 
-| Inverter model | Protocol / profile |
+| Inverter models | Protocol / profile |
 | --- | --- |
-| **ANENJI ANJ-11KW-48V-W-P** | SMG Protocol 4 — verified reference |
-| ANENJI ANJ-11KW-48V-WIFI, ANJ-11KW-48V-WIFI-P | SMG Protocol 4 |
-| ANENJI ANJ-6200W-48V, ANJ-4000W-24V-WIFI | Classic SMG / read-matched low-address variant |
-| ANENJI ANJ-4000W-24V | SMG Protocol 1 |
+| ANENJI ANJ-6200W-48V<br>ANENJI ANJ-4000W-24V-WIFI | Classic SMG |
+| ANENJI ANJ-4000W-24V<br>Sandisolar SD-HYM-4862HWP | SMG Protocol 1 |
 | ANENJI ANJ-6200-48PL | SMG Protocol 2 |
 | ANENJI HHS-11kW-WIFI, without parallel | SMG Protocol 3 |
-| ANENJI ANJ-5KW-48V-WIFI | SMG Protocol 11 |
-| Aninerel 6200 dual output, ANL-4200T-24L-W-PRO | SMG Protocol 11 |
-| Sandisolar SD 11KP48V WIFI | SMG Protocol 4 |
-| Sandisolar SD-HYM-4862HWP | SMG Protocol 1 |
-| MUST PV18-3024, MUST-compatible PV3300, MUST PV39-8048 TLV / PV3900 | MUST PV/PH18 with marker-selected variants |
-| Yingfa YF6.2K-LEL-1B, Victor NM-PRO-6.2KW, PowMr 4.2KW | PI30; MAX command variant requires separate confirmation |
-| LVYUAN TY-SIC-3.6KBE-W1, Gootu GT-H2436M14P5 | EyeBond / JsdSolar G-ASCII |
-| ANENJI GES48120M250-500P | Sumry GES 0x7530 |
-| Bluesun BSM15K-B | Hopewind 0237 |
+| ANENJI ANJ-11KW-48V-W-P<br>ANENJI ANJ-11KW-48V-WIFI<br>ANENJI ANJ-11KW-48V-WIFI-P<br>Sandisolar SD 11KP48V WIFI | SMG Protocol 4 |
+| ANENJI ANJ-5KW-48V-WIFI<br>Aninerel 6200 dual output<br>Aninerel ANL-4200T-24L-W-PRO | SMG Protocol 11 |
 | Kevolt PD0080G-TPM-EU, 8 kW three-phase hybrid | Deye-compatible three-phase high map |
 | ZL Power GSIII 12 kW | EyeBond 09C1 |
+| LVYUAN TY-SIC-3.6KBE-W1<br>Gootu GT-H2436M14P5 | EyeBond / JsdSolar G-ASCII |
+| Bluesun BSM15K-B | Hopewind 0237 |
+| MUST PV18-3024<br>MUST-compatible PV3300<br>MUST PV39-8048 TLV / PV3900 | MUST PV/PH18 with marker-selected variants |
+| Yingfa YF6.2K-LEL-1B<br>Victor NM-PRO-6.2KW<br>PowMr 4.2KW | PI30 |
+| ANENJI GES48120M250-500P | Sumry GES 0x7530 |
+
+Classic SMG entries require matching low-address read evidence. PI30 MAX is a
+separate command variant and requires its own confirmation.
 
 Additional family maps cover **SRNE, Growatt SPF, Deye low-voltage hybrids, Solis
 ESINV, Sandi / Aohai FSA and SmartESS 0912/0921**. All require a compatible EyeBond
@@ -177,10 +189,9 @@ you apply them on the router. See [DNS, domains and routing details](docs/PROTOC
 
 ```text
 custom_components/solar_inverter_bridge/  Integration, protocol core and bundled UI
-docs/                                    Public en-US guides and documentation index
+docs/                                    Guides and documentation index
 docs/development/                        Developer contracts and maintenance guidance
 docs/verification/                       Public, dated software/evidence summaries
-docs/private/                            Ignored local notes, Russian documents and archive
 tests/                                   Offline/loopback and browser checks
 tests_ha/                                Home Assistant integration tests
 tools/                                   Validation, packaging and local test utilities

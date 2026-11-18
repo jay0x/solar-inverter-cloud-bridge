@@ -34,7 +34,7 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 
 ## Profile composition
 
-Panel 0.24.0 consumes the backend `profile_layers` description. Recognition,
+Panel 0.25.0 consumes the backend `profile_layers` description. Recognition,
 enrollment review, Configuration, Connection and catalog details show the common
 map separately from a required model extension and qualification evidence. A common-only candidate
 uses **Use common map** without requiring an exact model name. Required corrections
@@ -56,6 +56,23 @@ Use real entity-registry IDs and overrides. The Sensors tab opens native
 `hass-more-info` history; it does not create a second history store. Recorder
 configuration governs retention and exclusions. Offline sensors can still show
 history; an entity without a current HA state cannot open more-info.
+
+Overview metrics and At a glance rows use the same history action directly on the
+reading. `ha_sensors` includes its stable measurement `key`, actual entity ID and HA
+`entity_category`. Never derive a history target from a suggested entity name.
+Diagnostic-category readings are rendered in At a glance for each profile. Home
+device cards keep static metrics to avoid nesting metric buttons inside the card button.
+History-link keyboard focus is retained across live refreshes.
+
+Settings groups use explicit `Parameter.group` values where supplied; otherwise the
+inventory resolves semantic keys with a neutral Other settings fallback. Presentation
+grouping never mutates fields or definition fingerprints. Register ranges from
+Protocol 4 must not classify low-address SMG, Deye or virtual ASCII slots.
+
+The Overview configuration shortcut uses a grid with a separate action row and a
+16 px text-to-action gap. Direct heading/paragraph/action sections use explicit
+spacing. Browser checks measure these gaps, value alignment and containment across
+360/390/768/1440 px in both themes.
 
 The **Home Assistant entities** link uses the actual HA device-registry ID, not the
 bridge's enrollment UUID. HA's native device page has fixed entity categories;

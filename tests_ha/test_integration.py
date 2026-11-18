@@ -932,7 +932,10 @@ async def test_registry_name_overrides_the_enrollment_name(hass, entry, hass_ws_
     assert shown["ha_device_id"] != device_id
     assert len(shown["ha_sensors"]) == 35
     sensor = next(item for item in shown["ha_sensors"] if item["entity_id"] == "sensor.renamed_roof_pv")
-    assert sensor == {"entity_id": "sensor.renamed_roof_pv", "name": "Roof PV", "state": "123.4", "unit": "W", "has_state": True, "disabled": False}
+    assert sensor == {"key": "pv_power", "entity_id": "sensor.renamed_roof_pv", "entity_category": None,
+                      "name": "Roof PV", "state": "123.4", "unit": "W", "has_state": True, "disabled": False}
+    assert {item['key'] for item in shown['ha_sensors'] if item['entity_category'] == 'diagnostic'} == {
+        'inverter_temperature', 'dc_temperature', 'pv_temperature'}
     assert sensor_id not in {item["entity_id"] for item in shown["ha_sensors"]}
     assert response["result"]["recorder_available"] == ("recorder" in hass.config.components)
     assert shown["suggested_name"] == "Suggested"

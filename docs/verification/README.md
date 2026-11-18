@@ -4,6 +4,36 @@ Software checks, installation acceptance and physical-device evidence are separa
 The commands below do not establish support for every inverter or firmware.
 See the [testing guide](../development/testing.md) for reproducible checks.
 
+## Source candidate 1.0.1
+
+- Integration **1.0.1**, panel **0.25.0**; ledger/incident schemas unchanged.
+- Component fingerprint:
+  `01304fc494b9c11264a1c9741fbea581fe2f5775a02bf6ac92fca01620550ead`.
+- Offline suite: **264 cases, 263 passed, one TCP502 skip**. HA integration suite:
+  **36 passed**. Panel/router browser suites and documentation/whitespace checks passed.
+- Overview uses stable measurement keys to find real HA entity IDs, including renamed
+  sensors. History/Details events work from readings, including existing unavailable
+  states. Diagnostic-category sensors appear in At a glance; missing sensor states
+  do not produce invented history targets. Home cards contain no nested buttons.
+- Browser checks cover mouse and keyboard navigation, live-refresh focus retention,
+  diagnostic readings and settings groups across low/high SMG, PI30/PI18, Deye and
+  Hopewind. Text-to-action gaps and containment are measured at 360/390/768/1440 px
+  in light/dark themes. The Overview Configuration action has a 16 px gap.
+- All 24 catalog profiles and retained aliases were checked for grouping. Explicit
+  groups are retained and semantic fallbacks replace address-range classification.
+  Existing profile definition hashes were unchanged by this presentation-only change.
+- Source deployment on the test HA **2026.11.2** retained all **85 registry entries**,
+  preferences and profile acceptance. Core validation and compressed/uncompressed
+  asset readback passed. Live Chromium opened actual HA history dialogs for PV power
+  and temperature, rendered all three reference diagnostic sensors and measured
+  a 16 px Configuration gap at all four viewport widths. No inverter actions were
+  sent; test collection remained disabled.
+- The same candidate was deployed and hash-verified on the production HA 2026.10.4
+  instance, preserving its selected callback connection and all 85 registry entries,
+  overrides and preferences. A roughly 90-second observation had 19/19 healthy
+  sampled states, 22 new snapshots and no new polling errors. The active transport
+  was binary TCP8899. Identity/gzip frontend responses matched the candidate.
+
 ## Release 1.0.0
 
 - Integration **1.0.0**, panel **0.24.0**, ledger schema **4**, incident schema **1**.

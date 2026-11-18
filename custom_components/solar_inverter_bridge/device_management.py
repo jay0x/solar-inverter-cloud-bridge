@@ -43,8 +43,11 @@ def native_sensors(hass, entry, device_ids):
             if entity.config_entry_id != entry.entry_id or entity.platform != DOMAIN or entity.domain != "sensor":
                 continue
             state = hass.states.get(entity.entity_id)
+            prefix = bridge_id + "_"
             sensors.append({
+                "key": entity.unique_id[len(prefix):] if entity.unique_id.startswith(prefix) else None,
                 "entity_id": entity.entity_id,
+                "entity_category": entity.entity_category.value if entity.entity_category is not None else None,
                 "name": entity.name or entity.original_name or entity.entity_id,
                 "state": state.state if state else "unavailable",
                 "unit": state.attributes.get("unit_of_measurement") if state else None,

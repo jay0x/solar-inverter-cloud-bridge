@@ -101,22 +101,51 @@ def execution_ready(field: Parameter) -> bool:
     return field.options is not None or field.kind in ("time", "number")
 
 
-def parameter_group(address: int) -> str:
-    if address < 630:
-        return "Output"
-    if address in (*range(632, 637), 639, 640, 641, *range(651, 656)):
-        return "Charging"
-    if address < 677:
-        return "Battery"
-    if address < 689:
-        return "AC input and display"
-    return "Contact and clock"
+# Presentation metadata only. Do not mutate Parameter.group or the accepted
+# profile definition merely to organize the UI. Register ranges and virtual
+# ASCII slots have different meanings across families.
+PARAMETER_GROUPS = {
+    "Output": (
+        "output_mode", "primary_output_priority", "secondary_output_priority",
+        "secondary_output_start", "secondary_output_stop", "current_output_priority",
+        "output_voltage_setting", "output_frequency_setting", "secondary_output_overload_alarm",
+        "secondary_output_enabled", "secondary_output_start_hour", "secondary_output_stop_hour",
+    ),
+    "Battery": (
+        "battery_type", "pi30_battery_type", "pi18_battery_type", "battery_overvoltage_protection",
+        "bulk_charging_voltage", "float_charging_voltage", "maximum_discharge_current",
+        "battery_recovery_voltage_ac", "battery_protection_voltage_ac", "op1_protection_voltage_offgrid",
+        "battery_protection_voltage_offgrid", "battery_protection_soc_ac", "battery_recovery_soc_ac",
+        "op1_protection_soc_offgrid", "battery_protection_soc_offgrid", "battery_return_voltage",
+    ),
+    "Charging": (
+        "primary_charging_priority", "secondary_charging_priority", "secondary_charging_start",
+        "secondary_charging_stop", "current_charging_priority", "constant_voltage_time",
+        "maximum_charging_current", "maximum_ac_charging_current", "equalization_enabled",
+        "equalization_voltage", "equalization_time", "equalization_timeout", "equalization_interval",
+        "grid_charge", "generator_charge",
+    ),
+    "AC input and display": (
+        "input_mode", "buzzer_mode", "lcd_backlight", "lcd_return_home", "energy_saving",
+        "overload_restart", "overtemperature_restart", "overload_bypass", "source_interrupt_alarm",
+        "fault_recording",
+    ),
+    "Contact and clock": ("dry_contact", "inverter_datetime"),
+    "System": ("automatic_mains_output", "boot_method", "remote_switch", "machine_type"),
+    "Energy": ("energy_management_mode", "solar_sell", "export_power_limit", "solar_power_priority"),
+    "Power regulation": ("active_power_regulation_mode", "active_power_regulation_ratio", "reactive_power_regulation_mode"),
+}
+_GROUP_BY_KEY = {key: group for group, keys in PARAMETER_GROUPS.items() for key in keys}
+
+
+def parameter_group(field: Parameter) -> str:
+    return field.group or _GROUP_BY_KEY.get(field.key, "Other settings")
 
 
 def inventory(fields=None):
     return tuple({
         "key": field.key, "name": field.name, "address": field.address, "kind": field.kind,
-        "unit": field.unit, "access": access_class(field), "group": field.group or parameter_group(field.address),
+        "unit": field.unit, "access": access_class(field), "group": parameter_group(field),
         "options": None if field.options is None else tuple(field.options.values()),
         "bounds": field.bounds,
         "protocol_access": "R" if field.read_only else "R/W",

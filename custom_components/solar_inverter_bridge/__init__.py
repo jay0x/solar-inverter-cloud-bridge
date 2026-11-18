@@ -128,7 +128,7 @@ async def _register_panel(hass):
     from homeassistant.components import frontend
 
     panel_path = Path(__file__).parent / "frontend" / "panel.js"
-    module_url = "/solar_inverter_bridge/panel.js?v=0.24.0"
+    module_url = "/solar_inverter_bridge/panel.js?v=0.25.0"
     state = hass.data.setdefault(DOMAIN, {})
     if not state.get("static_registered"):
         await hass.http.async_register_static_paths([
