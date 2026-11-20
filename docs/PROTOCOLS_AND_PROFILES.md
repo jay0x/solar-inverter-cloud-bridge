@@ -1,7 +1,7 @@
 # Ports, collector protocols, and inverter profiles
 
 Solar Inverter Cloud Bridge technical reference for users and contributors.
-Current source candidate: integration 1.0.1 / panel 0.25.0. Checks and hardware qualification
+Current source candidate: integration 1.0.1 / panel 0.26.0. Checks and hardware qualification
 are described in `docs/verification/README.md` in the source repository.
 
 **Implemented now:** mixed AT/binary EyeBond on TCP 502/18899/38899, the native
@@ -13,7 +13,10 @@ from a catalog. See [the complete profile/measurement/control matrix](PROFILE_EX
 The reference binary callback has hardware reading and display-setting write
 evidence. Additional families are **source-derived and simulator-tested**, not
 independently hardware-qualified. Inferred profiles may use implemented controls
-after profile acceptance. Protocol 4 clock writes are implemented on AT and binary;
+after profile acceptance. Explicit collector endpoint writes and separate apply commands
+are implemented on the owned AT/binary session, with durable IDs and readback.
+The reference endpoint change/return was checked across software restarts; mDNS and
+power-loss persistence remain unverified. Protocol 4 clock writes are implemented on AT and binary;
 binary collector reset and arbitrary collector-configuration writes are not implemented.
 
 Read the release's own status before configuring a newly documented capability.
@@ -177,7 +180,7 @@ boundaries and enforce size/deadline limits. Current cap: 4096 total bytes.
 | --- | --- | --- |
 | FC1 | Collector heartbeat/startup; includes UTC time/interval in known requests | Qualified bootstrap and liveness |
 | FC2 | Read collector parameters | Full PN and supported metadata; validate status and echoed parameter |
-| FC3 | Write collector configuration | Not part of initial binary monitoring; no guessed reset/UART/endpoint writes |
+| FC3 | Write collector configuration | Explicit maintenance: endpoint parameter 21 and apply parameter 29; durable operations and readback, no arbitrary setter or UART writes |
 | FC4 | Forward a complete request/reply to an inverter | Modbus/ASCII monitoring; source-defined controls for explicitly accepted experimental profiles use the common durable executor |
 | 0x11–0x13 | Additional functions named in external sources | Behavior not qualified for implementation here |
 
@@ -194,6 +197,18 @@ Example, **synthetic**, not captured hardware traffic:
 
 This has TID `0x1234`, outer code 1, outer address 255, outer FC4, and inner slave 1
 reading one word at register 184. The example route is not a universal setting.
+
+### Collector server endpoint
+
+Explicit `host,port,TCP` collector endpoints use AT `CLDSRVHOST1` or binary collector
+parameter 21. Applying is a separate `INTPARA=29,1` / FC3 parameter-29 action; these
+are not inverter Modbus register writes. On reference Wi-Fi.DTU 8.50.12.3 / AT 1.11,
+a callback write, primary-AT return write and reported-address retention across
+software restarts were checked with two hostnames routed to the same local HA.
+This does not establish collector mDNS support, external-cloud reachability, full
+power-loss persistence or recovery from a wrong endpoint. The Connection editor
+checks a destination and live collector before writing, and preserves the return
+address in the durable operation journal.
 
 ### Identity, routes and correlation
 

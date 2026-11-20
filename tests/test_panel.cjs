@@ -34,6 +34,8 @@ window.state = ${JSON.stringify(fixture)}; window.calls = []; window.operations 
 window.deviceTemplate = structuredClone(state.devices[0]); window.holdVerification = false;
 window.profileLayerFixtures = ${JSON.stringify(profileLayers)};
 window.profileParameterFixtures = ${JSON.stringify(profileParameters)};
+window.endpointBackend = JSON.parse(sessionStorage.getItem('mock-endpoint') || 'null') || {endpoint:'dtu_ess.eybond.com,18899,TCP',saved_endpoint:null,latest_operation:null,session_ref:'endpoint-before'};
+window.endpointOperations = JSON.parse(sessionStorage.getItem('mock-endpoint-ops') || '{}');
 // This mock is server-owned state: UI draft storage must not reconstruct its settings,
 // watch or evidence after a reload. Tests can replace the panel without resetting it.
 window.incidentBackend = JSON.parse(sessionStorage.getItem('mock-incident-backend') || 'null') || {
@@ -79,6 +81,36 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     return incidentView(request.device_id);
   }
   if (request.type.endsWith('/network_hints')) return {ha_ip:'192.168.10.77',subnet:'192.168.10.0/24',router_ip:'192.168.10.1',dns_ip:'192.168.10.1',addresses:[{address:'192.168.10.77',network:'192.168.10.0/24',default:true}]};
+  if (request.type.endsWith('/journal')) {
+    const records=Array.from({length:405},(_,i)=>({operation_id:'journal-'+i,setting_key:'primary_output_priority',state:'completed',outcome:'confirmed'}));
+    return {offset:request.offset,limit:request.limit,retained:records.length,max_operations:100000,records:records.slice(request.offset,request.offset+request.limit)};
+  }
+  if (request.type.endsWith('/collector_endpoint')) {
+    const history=()=>structuredClone({saved_endpoint:endpointBackend.saved_endpoint,latest_operation:endpointBackend.latest_operation});
+    const observed=()=>({endpoint:endpointBackend.endpoint,transport:'at',listener_port:18899,session_ref:endpointBackend.session_ref,read_at:new Date().toISOString(),history:history()});
+    const persist=()=>{sessionStorage.setItem('mock-endpoint',JSON.stringify(endpointBackend));sessionStorage.setItem('mock-endpoint-ops',JSON.stringify(endpointOperations));};
+    if (request.action==='state') return history();
+    if (request.action==='read') return observed();
+    if (request.action.startsWith('prepare')) {
+      if (window.endpointBadDns) throw new Error('collector_destination_not_local');
+      return {...observed(),requested_endpoint:request.value,resolved_addresses:['192.168.10.77'],destination_is_local:true,prepared_action:request.action==='prepare_restore'?'restore':'write'};
+    }
+    if (request.action==='check' || request.action==='accept_current') {
+      const operation=endpointOperations[request.operation_id];
+      if (!operation) throw new Error('collector_operation_not_found');
+      return {...observed(),operation:structuredClone(operation)};
+    }
+    if (!request.acknowledged) throw new Error('acknowledgement_required');
+    if (!endpointOperations[request.operation_id]) {
+      if (request.expected_value!==endpointBackend.endpoint) throw new Error('collector_endpoint_baseline_changed');
+      const operation={operation_id:request.operation_id,request:{...request,key:'collector_server_endpoint',collector_action:request.action},write_plan:{...observed(),resolved_addresses:['192.168.10.77']},state:'completed',outcome:'confirmed',unresolved:false};
+      if (request.action!=='apply') {endpointBackend.saved_endpoint ||= endpointBackend.endpoint; endpointBackend.endpoint=request.value;operation.last_observed_value=request.value;}
+      else endpointBackend.session_ref='endpoint-after-'+request.operation_id;
+      endpointOperations[request.operation_id]=operation;endpointBackend.latest_operation=operation;persist();
+    }
+    if (window.loseEndpointReply) {window.loseEndpointReply=false;throw new Error('Connection interrupted');}
+    return structuredClone(endpointOperations[request.operation_id]);
+  }
   if (request.type.endsWith('/configure_network')) { state.allowed_sources=request.allowed_sources; if (request.bootstrap_preference) state.bootstrap_preference=request.bootstrap_preference; return {}; }
   if (request.type.endsWith('/connect_collector')) {
     const result={request_id:request.request_id,state:request.collector_ip?'waiting':'waiting_for_connection',collector_ip:request.collector_ip,sent:Boolean(request.collector_ip)};
@@ -151,6 +183,17 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     if (!await page.locator('#edit-'+key).count()) await page.locator(`[data-action="edit"][data-value="${key}"]`).click();
     return page.locator('#edit-'+key);
   };
+  const changeConnection = async (method='redirect', rewrite=false) => {
+    await page.locator('[data-action="connection-start"]').click();
+    if(method==='auto') await page.locator('[data-disclosure^="connection-mode-advanced:"] > summary').click();
+    await page.locator(`[data-action="connection-method"][data-value="${method}"]`).click();
+    await page.locator('[data-action="connection-next"]').click();
+    if(method==='redirect') await page.locator('#connection-rewrite').setChecked(rewrite);
+  };
+  const advanced = async () => {
+    const details=page.locator('[data-disclosure^="connection-advanced:"]');
+    if(!await details.evaluate(n=>n.open))await details.locator('summary').first().click();
+  };
   try {
     await page.goto(url);
     await page.getByRole("button", {name: "Configuration", exact: true}).click();
@@ -161,6 +204,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(await page.locator('#control-mode, #experimental-control').count(),0);
     await page.evaluate(() => {
       state.profile_catalogue=[{profile_id:'smg_4',name:'SMG 4',measurements:13,controls:24,evidence:'Source-derived',profile_layers:profileLayerFixtures.unknown}];
+      testPanel._navigate('sib/device/test-device/activity');
     });
     await refresh();
     const catalogue=page.locator('[data-disclosure="profile-catalogue"]');
@@ -177,7 +221,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await catalogue.locator('summary').first().click();
     await refresh();
     assert.equal(await catalogue.evaluate(node=>node.open),false);
-    await page.evaluate(()=>{state.profile_catalogue=[];});
+    await page.evaluate(()=>{state.profile_catalogue=[];testPanel._navigate('sib/device/test-device/settings');});
     await refresh();
     console.log('PASS profile catalog and nested composition retain expanded/collapsed state across polling');
     await edit('primary_output_priority');
@@ -288,8 +332,29 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert.equal(diagnostic.schema,2);
     assert.equal(diagnostic.parameter_inventory.length,51);
     assert.equal(diagnostic.recent_issues[0].register_address,630);
-    assert.equal(diagnostic.frontend.version,'0.25.0');
+    assert.equal(diagnostic.frontend.version,'0.26.0');
     console.log('PASS timestamped issue in HA time zone and backend diagnostics download');
+    await page.evaluate(()=>{
+      window.previousOps=state.devices[0].operations;
+      state.devices[0].operations=[{operation_id:'collector-history',setting_key:'collector_server_endpoint',collector_action:'apply',desired_value:'local.example,18899,TCP',state:'completed',outcome:'confirmed',created_at:'2026-11-02T12:00:00Z',actor_name:'Administrator'}];
+      testPanel._navigate('sib/device/test-device/overview');
+    });await refresh();
+    assert.equal(await page.getByRole('heading',{name:'Recent changes',exact:true}).count(),1);
+    assert.equal(await page.getByRole('heading',{name:'Cloud assignment operation',exact:true}).count(),0);
+    assert.equal(await page.getByText('Inverter settings',{exact:true}).count(),0);
+    assert.equal(await page.locator('.compatibility-panel').count(),0);
+    await page.getByRole('button',{name:'Full journal',exact:true}).click();
+    assert((await page.url()).endsWith('/activity'));
+    assert.equal(await page.getByRole('heading',{name:'Recent changes',exact:true}).count(),0);
+    assert.equal(await page.getByRole('heading',{name:'Diagnostics',exact:true}).count(),1);
+    const journalDownload=page.waitForEvent('download');
+    await page.getByRole('button',{name:'Download full journal',exact:true}).click();
+    const fullJournal=JSON.parse(fs.readFileSync(await (await journalDownload).path(),'utf8'));
+    assert.equal(fullJournal.records.length,405);
+    assert.equal(fullJournal.records.at(-1).operation_id,'journal-404');
+    assert.deepEqual(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/journal')).map(c=>c.offset)),[0,200,400]);
+    await page.evaluate(()=>{state.devices[0].operations=window.previousOps;});
+    console.log('PASS Overview changes without obsolete cards, Activity Diagnostics and complete three-page journal export');
 
     await page.evaluate(() => window.testPanel._navigate("sib/device/test-device/settings"));
     assert.equal(await page.locator("#auto-reset").isChecked(), false);
@@ -363,7 +428,8 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     const geometry=async()=>{
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
       await overflow();
-      const boxes=await page.locator('.setup-flow > *').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {class:element.className,x:r.x,width:r.width,top:r.top,bottom:r.bottom};}));
+      // Query and measure in one turn: status refresh replaces the inner nodes.
+      const boxes=await page.evaluate(()=>[...testPanel.querySelectorAll('.setup-flow > *')].map(element=>{const r=element.getBoundingClientRect();return {class:element.className,x:r.x,width:r.width,top:r.top,bottom:r.bottom};}));
       for(const box of boxes) {assert(Math.abs(box.x-boxes[0].x)<1,'wizard columns have different left edges');assert(Math.abs(box.width-boxes[0].width)<1,'wizard columns have different widths');}
       for(let i=1;i<boxes.length;i++) assert(Math.abs(boxes[i].top-boxes[i-1].bottom-24)<1,`wizard blocks do not have a 24px gap: ${JSON.stringify(boxes)}`);
     };
@@ -479,14 +545,8 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
           assert.equal(spacing.reconnect, false);
           if (route.endsWith("/connection")) assert.equal(spacing.readingLine, "0px");
           if (route.endsWith('/overview')) {
-            const gaps=await page.locator('.access-summary').evaluate(section=>{
-              const text=section.querySelector('.card-subtitle').getBoundingClientRect();
-              const button=section.querySelector('button').getBoundingClientRect();
-              const box=section.getBoundingClientRect();
-              return {vertical:button.top-text.bottom,contained:button.right<=box.right && button.left>=box.left};
-            });
-            assert(gaps.vertical>=15.5 && gaps.vertical<=24,`Configuration button spacing at ${width}: ${gaps.vertical}`);
-            assert(gaps.contained);
+            assert.equal(await page.locator('.recent-changes').count(),1);
+            assert.equal(await page.locator('.access-summary, .compatibility-panel').count(),0);
           }
           if (route.endsWith('/settings')) {
             const positions=await page.locator('.parameter-control > .value-button strong, .parameter-control > .value-static strong').evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect().x));
@@ -610,7 +670,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     console.log('PASS stable editor geometry: select/number/time, Apply/Cancel/draft note, polling and revert at four widths');
 
     await page.evaluate(() => testPanel._navigate('sib/device/second-device/connection'));
-    await page.getByRole('button',{name:'Remove inverter',exact:true}).click();
+    await page.getByRole('button',{name:'Remove…',exact:true}).click();
     const dialog = page.getByRole('dialog');
     const remove = dialog.getByRole('button',{name:'Remove inverter',exact:true});
     assert(await remove.isDisabled());
@@ -675,7 +735,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
       await refresh();
       assert((await layers.innerText()).includes('waiting for current readings'));
       await page.evaluate(() => testPanel._navigate('sib/device/test-device/connection'));
-      assert((await page.locator('.profile-layers').innerText()).includes('Common map'));
+      assert.equal(await page.locator('.profile-layers').count(),0,'Profile composition belongs in Configuration, not Connection');
     }
     await page.evaluate(fields => {
       state.devices[0].profile_id='modbus_protocol_4';
@@ -747,9 +807,11 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     console.log('PASS callback setup: required IP, persisted drafts/request ID, local TCP target and no automatic resend on reload');
 
     await page.evaluate(()=>testPanel._navigate('sib/device/test-device/connection'));
-    assert.equal(await page.locator('#connection-method').inputValue(),'redirect');
-    assert.equal(await highlighted('save-connection'),false);
+    assert.equal(await page.locator('#connection-wizard, #cloud-assignment').count(),0);
+    assert.equal(await page.locator('.compatibility-panel, .connection-profile').count(),0);
+    assert.equal(await page.locator('[data-disclosure^="connection-advanced:"]').evaluate(n=>n.open),false);
     assert.equal(await highlighted('poll-options'),false);
+    await advanced();
     assert.equal(await highlighted('network'),false);
     const originalSources=await page.locator('#allowed-sources').inputValue();
     await page.locator('#allowed-sources').fill(originalSources+', '+originalSources);
@@ -774,25 +836,29 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     await page.getByRole('button',{name:'Save collection settings',exact:true}).click();
     await page.waitForFunction(()=>state.devices[0].poll_interval===1 && !state.devices[0].enabled);
     assert.equal(await highlighted('poll-options'),false);
-    await page.locator('#connection-method').selectOption('callback');
-    assert.equal(await highlighted('save-connection'),true);
-    await page.locator('#connection-method').selectOption('redirect');
-    assert.equal(await highlighted('save-connection'),false);
-    await page.locator('#connection-method').selectOption('callback');
+    const beforeChange=await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).length);
+    await changeConnection('callback');
+    assert(await page.locator('[data-action="connection-next"]').isDisabled());
     await page.locator('#collector-ip').fill('192.168.10.58');
     await refresh();
-    assert.equal(await page.locator('#connection-method').inputValue(),'callback');
+    assert.equal(await page.locator('#collector-ip').inputValue(),'192.168.10.58');
+    await page.locator('[data-action="connection-next"]').click();
+    assert.equal(await highlighted('save-connection'),true);
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).length),beforeChange,'Closing the review must not change the route');
+    await changeConnection('callback');
+    await page.locator('[data-action="connection-next"]').click();
     await page.getByRole('button',{name:'Save connection',exact:true}).click();
     await page.waitForFunction(()=>state.devices[0].connection_options?.method==='callback');
-    assert.equal(await highlighted('save-connection'),false);
+    assert.equal(await page.locator('[data-action="save-connection"]').count(),0);
     const savedConnection=await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1));
     assert.equal(savedConnection.device_id,'test-device');
     assert.equal(savedConnection.collector_ip,'192.168.10.58');
-    assert.equal(await page.locator('#collector-ip').inputValue(),'192.168.10.58');
     assert.match(await panel().innerText(),/Connection preference saved/);
     assert.equal(await page.evaluate(()=>state.devices.length),1);
     for (const width of [360,1440]) {await page.setViewportSize({width,height:1000});await overflow();}
-    await page.locator('#connection-method').selectOption('redirect');
+    await changeConnection('redirect');
+    await page.locator('[data-action="connection-next"]').click();
     await page.getByRole('button',{name:'Save connection',exact:true}).click();
     await page.waitForFunction(()=>state.devices[0].connection_options?.method==='redirect');
     assert.equal(await page.evaluate(()=>calls.filter(c=>c.type.endsWith('/set_connection')).at(-1).collector_ip),'192.168.10.58');
@@ -826,8 +892,8 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
     assert(await page.locator('[data-action="reset-module"]').isDisabled());
     await page.evaluate(() => {state.devices=[];testPanel._navigate('sib');});
     await refresh();
-    await page.locator('[data-disclosure="home-help"] > summary').click();
-    await page.getByRole('button',{name:'Collect compatibility report',exact:true}).click();
+    if(!await page.locator('[data-disclosure="home-help"]').evaluate(n=>n.open)) await page.locator('[data-disclosure="home-help"] > summary').click();
+    await page.getByRole('button',{name:'Reports',exact:true}).click();
     await page.locator('#report-inverter_model').fill('Unknown variant');
     await page.getByRole('button',{name:'Start collection',exact:true}).click();
     await page.waitForFunction(() => calls.some(call=>call.type.endsWith('/compatibility') && call.action==='start'));
@@ -1054,6 +1120,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
       testPanel._navigate('sib');
     });
     await refresh();
+    if(!await page.locator('[data-disclosure="home-help"]').evaluate(n=>n.open)) await page.locator('[data-disclosure="home-help"] > summary').click();
     await page.locator('[data-disclosure="incident-diagnostics"] > summary').click();
     assert.equal(await incidentPanel().locator('.incident-card').count(),3);
     assert.match(await incidentPanel().innerText(),/Bridge \/ pre-enrollment/);
@@ -1101,7 +1168,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
       testPanel._navigate('sib');
     });
     await refresh();
-    await page.locator('[data-disclosure="home-help"] > summary').click();
+    if(!await page.locator('[data-disclosure="home-help"]').evaluate(n=>n.open)) await page.locator('[data-disclosure="home-help"] > summary').click();
     assert.match(await incidentPanel().innerText(),/Add an inverter to arm a device watch/);
     assert.equal(await incidentPanel().locator('.incident-card a').count(),3);
     assert.equal(await page.getByRole('button',{name:'Catch next failure',exact:true}).count(),0);
@@ -1125,6 +1192,7 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
           incidentBackend.incidents=[{device_id:'test-device',fingerprint:'sib-inc-v1-0123456789abcdef01234567',code:'TimeoutError',count:1,recovered_count:1,sample_count:2,status:'recovered',needs_attention:false}];
           testPanel._drafts={};testPanel._saveDrafts();
           testPanel._disclosures['incident-diagnostics']=true;
+          testPanel._disclosures['home-help']=true;
           persistIncidents();testPanel._navigate(route);
         },route);
         await refresh();
@@ -1149,6 +1217,105 @@ element.hass = {user: {id: 'test-admin'}, callWS: async function(request) {
       }
     }
     console.log('PASS disable → delete all incidents → re-enable on Activity and global Diagnostics at 360/390/1440px');
+    await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();});
+    await page.reload();
+    await page.evaluate(()=>testPanel._navigate('sib/device/test-device/connection'));
+    await refresh();
+    assert.equal(await page.locator('#endpoint-host').count(),0);
+    await changeConnection('redirect',true);
+    const endpointCalls=()=>page.evaluate(()=>calls.filter(c=>c.type.endsWith('/collector_endpoint')));
+    const endpointWrites=()=>page.evaluate(()=>calls.filter(c=>c.type.endsWith('/collector_endpoint') && ['write','restore','apply'].includes(c.action)));
+    assert.equal(await page.locator('#endpoint-host').inputValue(),'homeassistant.local');
+    assert((await endpointCalls()).every(c=>c.action==='state'),'Opening Connection must not query/write hardware');
+    assert(await page.locator('[data-action="endpoint-save"]').isDisabled());
+    await page.setViewportSize({width:360,height:640});
+    await page.evaluate(()=>{window.endpointBadDns=true;});
+    await page.locator('[data-action="endpoint-prepare"]').click();await settled();
+    assert.match(await page.locator('#cloud-assignment [role="alert"]').innerText(),/does not resolve exclusively/);
+    assert.equal(await page.locator('main > [role="alert"]').count(),0,'Validation must not be shown only at the top of the page');
+    const checkPosition=await page.locator('#endpoint-check-result').evaluate(n=>{
+      const message=n.getBoundingClientRect(),button=n.previousElementSibling.getBoundingClientRect();
+      return {top:message.top,bottom:message.bottom,viewport:innerHeight,gap:message.top-button.bottom};
+    });
+    assert(checkPosition.gap>=0 && checkPosition.gap<=24,'Validation must be adjacent to its Check button');
+    assert(checkPosition.top>=0 && checkPosition.bottom<=checkPosition.viewport+1,'The result must be visible after checking on mobile');
+    await refresh();
+    assert.match(await page.locator('#endpoint-check-result').innerText(),/does not resolve exclusively/,'Polling must retain the inline error');
+    assert.equal((await endpointWrites()).length,0);
+    await page.locator('#endpoint-host').fill('homeassistant.local');
+    assert.equal(await page.locator('#endpoint-check-result').getAttribute('role'),'status');
+    assert.equal(await page.locator('#cloud-assignment [role="alert"]').count(),0);
+    await page.evaluate(()=>{window.endpointBadDns=false;});
+    await page.locator('[data-action="endpoint-prepare"]').click();await settled();
+    await page.locator('[data-action="connection-next"]').click();
+    await page.locator('#endpoint-risk').check();
+    assert(await page.locator('[data-action="endpoint-save"]').isEnabled());
+    await page.locator('[data-action="connection-back"]').click();
+    await page.locator('#endpoint-host').fill('m2m.eybond.com');
+    await refresh();
+    assert.equal(await page.locator('#endpoint-host').inputValue(),'m2m.eybond.com');
+    assert(await page.locator('[data-action="endpoint-save"]').isDisabled(),'Changing a checked address must invalidate consent/check');
+    await page.locator('[data-action="endpoint-prepare"]').click();await settled();
+    await page.locator('[data-action="connection-next"]').click();
+    await page.locator('#endpoint-risk').check();
+    await page.locator('[data-action="endpoint-save"]').click();await settled();
+    assert.deepEqual((await endpointWrites()).map(c=>c.action),['write','apply']);
+    assert.equal(await page.evaluate(()=>endpointBackend.endpoint),'m2m.eybond.com,18899,TCP');
+    assert.equal(await page.evaluate(()=>endpointBackend.saved_endpoint),'dtu_ess.eybond.com,18899,TCP');
+    await page.reload();await refresh();
+    assert.equal((await endpointWrites()).length,0,'Reload must never replay saved endpoint requests');
+    await advanced();
+    await page.locator('[data-action="connection-restore"]').click();
+    assert.equal(await page.locator('#endpoint-host').inputValue(),'dtu_ess.eybond.com');
+    await page.locator('[data-action="endpoint-prepare"]').click();await settled();
+    await page.locator('[data-action="connection-next"]').click();
+    await page.locator('#endpoint-risk').check();
+    await page.locator('[data-action="endpoint-save"]').click();await settled();
+    assert.deepEqual((await endpointWrites()).map(c=>c.action),['restore','apply']);
+    assert.equal(await page.evaluate(()=>endpointBackend.endpoint),'dtu_ess.eybond.com,18899,TCP');
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    await changeConnection('redirect',true);
+    await page.locator('[data-action="endpoint-local"]').click();
+    await page.locator('[data-action="endpoint-prepare"]').click();await settled();
+    await page.locator('[data-action="connection-next"]').click();
+    await page.locator('#endpoint-risk').check();
+    await page.evaluate(()=>{window.loseEndpointReply=true;window.calls=[];});
+    await page.locator('[data-action="endpoint-save"]').click();await settled();
+    assert.deepEqual((await endpointWrites()).map(c=>c.action),['write'],'A lost write response must not start Apply');
+    await page.reload();await refresh();
+    assert.equal((await endpointWrites()).length,0);
+    await page.getByRole('button',{name:'Review pending change',exact:true}).click();
+    assert(await page.locator('[data-action="endpoint-apply"]').isVisible(),'A verified journal write can be explicitly applied after reload');
+    await page.locator('[data-action="endpoint-check"]').click();await settled();
+    assert.equal((await endpointWrites()).length,0,'Check must never write');
+    await page.locator('#endpoint-risk').check();
+    await page.locator('[data-action="endpoint-apply"]').click();await settled();
+    assert.deepEqual((await endpointWrites()).map(c=>c.action),['apply']);
+    for (const width of [360,390,768,1440]) {
+      for (const dark of [false,true]) {
+        await page.setViewportSize({width,height:1000});
+        await page.evaluate(dark=>{document.documentElement.style.setProperty('--primary-background-color',dark?'#111':'#fafafa');document.documentElement.style.setProperty('--primary-text-color',dark?'#eee':'#222');},dark);
+        await overflow();
+        assert(await page.locator('.endpoint-editor').evaluate(n=>n.scrollWidth<=n.clientWidth+1));
+      }
+    }
+    await page.evaluate(()=>{endpointBackend.saved_endpoint='<img src=x onerror="window.endpointInjected=true">';testPanel._endpointState={};});
+    await refresh();
+    assert.equal(await page.locator('.endpoint-editor img').count(),0);
+    assert.equal(await page.evaluate(()=>Boolean(window.endpointInjected)),false);
+    // The add flow offers review but never writes an address as part of enrollment.
+    await page.evaluate(()=>{
+      state.pending=[{identity_sha256:'new-collector',identity_ref:'sha256:fixture',ready:true,snapshots:2,profile_id:'modbus_protocol_4'}];
+      testPanel._drafts['setup:collector']='new-collector';testPanel._drafts['setup:name']='New inverter';
+      window.calls=[];testPanel._navigate('sib/add/3');
+    });await refresh();
+    assert(await page.getByLabel('Review Cloud assignment after adding').isVisible());
+    await page.getByLabel('Review Cloud assignment after adding').check();
+    await page.locator('[data-action="enroll"]').click();await settled();
+    assert((await page.url()).endsWith('/second-device/connection'));
+    assert.equal((await endpointWrites()).length,0,'Enrollment must only offer endpoint review');
+    assert.deepEqual(errors,[]);
+    console.log('PASS Cloud assignment DNS/check/consent, write/apply/restore, reload/lost-response recovery, no replay, setup offer, escaping and responsive layouts');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

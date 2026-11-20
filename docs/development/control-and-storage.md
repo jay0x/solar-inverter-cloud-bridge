@@ -122,6 +122,52 @@ binding renewal is explicit and retains HA IDs; unresolved work blocks replaceme
 
 ## Backup and maintenance
 
+### Collector endpoint maintenance API
+
+The administrator-only `solar_inverter_bridge/collector_endpoint` WebSocket API
+provides `state`, `read`, `prepare`, `prepare_restore`, `write`, `restore`, `apply`,
+`check`, and `accept_current` actions. The Connection editor uses this same executor;
+the Add wizard offers endpoint review after enrollment without an automatic write.
+
+Only explicit `host,port,TCP` endpoint values are supported. Mutations require
+`acknowledged: true`, an operation ID, the exact `expected_value`, and the observed
+`expected_transport` / `expected_listener_port`. The target must resolve to local
+HA IPv4 interfaces and its port must be a bound primary Bridge listener. Only the
+exact original endpoint saved by the server's device-bound journal can use `restore`
+with an external DNS destination; no browser-provided return address grants this
+exception. `prepare_restore` applies the same provenance check. External reachability
+is not claimed. Resolving a name from HA
+does not establish that a collector supports the same DNS/mDNS resolution path.
+
+Collector operations reuse the existing device/stream ownership locks, bounded
+command admission, SQLite operation IDs, durable send claims and unresolved barrier.
+`state` reads only the journal, including the first saved return address and latest
+operation. `prepare` reads the collector and validates the destination without
+creating an operation or sending a setter. The full collector identity is queried
+again before accessing the endpoint. Each
+`write` preserves the old endpoint and session context and requires independent
+readback; it does not implicitly apply or restart. `apply` has a separate operation
+ID and its successful result means command acceptance, not a new connection.
+Neither action retries a possibly sent command. Paused inverter collection still
+allows explicit collector maintenance through an existing management connection.
+
+An uncertain endpoint write can be checked with `action: check` and its operation
+ID. A matching fresh readback resolves that write while retaining its original
+uncertain outcome. An uncertain apply is not cleared merely because the address
+matches: applying, reconnecting, and persisting across restart are separate facts.
+An explicitly acknowledged `accept_current` reads the current value again and records
+the administrator's decision without rewriting the original uncertain outcome.
+The ordinary inverter reconciliation and keep-current-value actions do not
+interpret collector operations as inverter registers. Retain the management-capable
+runtime while such operations remain unresolved; an old runtime cannot reconcile them.
+
+AT uses `CLDSRVHOST1` and `INTPARA=29,1`; binary uses collector FC2/FC3 parameter
+21 and a separate FC3 parameter 29 with value `1`. There is no arbitrary AT/FC3
+write API, UART setter, or binary reset button. The existing AT restart action is
+separate. See [hardware qualification](../verification/README.md#collector-endpoint-write-and-return).
+
+### Database backup
+
 The HA backup hook checkpoints WAL and freezes the bridge writer during copying.
 The polling scheduler waits through the database freeze and resumes from fresh
 enrollment data afterward; a temporary backup refusal must not terminate it.

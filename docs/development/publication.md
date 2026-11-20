@@ -6,15 +6,21 @@
 - Maintainer: **jay0x**; repository: [jay0x/solar-inverter-cloud-bridge](https://github.com/jay0x/solar-inverter-cloud-bridge).
 - Integration domain and component directory: `solar_inverter_bridge`.
 - Release: **1.0.0**, panel **0.24.0**, ledger schema **4**, incident schema **1**.
-- Current source candidate: **1.0.1**, panel **0.25.0**; schemas unchanged.
+- Current source candidate: **1.0.1**, panel **0.26.0**; schemas unchanged.
 - Tested minimum Home Assistant version: **2026.10.4**; tested HACS version: **2.0.5**.
 
-The public repository is available as a HACS custom repository. Version 1.0.0 is
-a normal release, not a pre-release; default-catalog inclusion requires maintainer approval. Current
+The public repository is included in the default HACS catalog. Version 1.0.0 is
+a normal release, not a pre-release. Current
 checks and installation evidence are in [verification](../verification/README.md).
 Home Assistant Marketplace uses the same `hacs/default` catalog and `hacs.json`;
-there is no separate catalog submission. The existing catalog PR is
-[hacs/default #13972](https://github.com/hacs/default/pull/13972).
+there is no separate catalog submission. Catalog inclusion was approved and merged
+in [hacs/default #13972](https://github.com/hacs/default/pull/13972) on November 19, 2026.
+Installation documentation leads with store search; custom-repository instructions
+are a fallback while a local catalog is refreshing.
+
+A commit pushed to `main` does not publish a release. The source candidate's newer
+features are not part of v1.0.0. Keep the published release and source versions distinct;
+create a new tag and GitHub Release only when release publication is explicitly requested.
 
 ## Repository contents and installation
 
@@ -71,7 +77,8 @@ agreement with the code and the scope of hardware claims still require review.
    and publish a GitHub Release with supported features and limitations. A tag
    alone is not a release. A manual ZIP is optional and requires explicit build
    authorization and verification; workflows do not automatically publish one.
-5. Default HACS catalog inclusion is a separate submission under its current rules.
+5. This repository is already listed in the default HACS catalog; subsequent releases
+   do not require another inclusion pull request.
 
 ## Official references
 

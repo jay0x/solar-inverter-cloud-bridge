@@ -1038,6 +1038,10 @@ class CollectorService:
         from .parameters import FIELDS, decode_observed, encode_value, readback_matches
         confirmed = []
         for record in records:
+            if record["request"].get("collector_action"):
+                # Collector management is reconciled explicitly through its own
+                # identity/readback API, never interpreted as inverter registers.
+                continue
             field = next(item for item in fields_for(device["profile_id"]) if item.key == record["request"]["key"])
             words = tuple(record["planned_words"]) if "planned_words" in record else encode_value(field, record.get("send_value", record["request"]["value"]))
             async with holder["lock"]:
@@ -1076,6 +1080,8 @@ class CollectorService:
                 raise ValueError("operation_not_found")
             if not record["unresolved"]:
                 return record
+            if record["request"].get("collector_action"):
+                raise ValueError("collector_operation_requires_endpoint_check")
             device = await asyncio.to_thread(self.storage.device,device_id)
             field = next(item for item in fields_for(device["profile_id"]) if item.key == record["request"]["key"])
             if field.kind == "datetime" and (expected_value != record.get("last_observed_value") or expected_observed_at != record.get("last_observed_at")):

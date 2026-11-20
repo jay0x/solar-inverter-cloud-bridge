@@ -344,3 +344,35 @@
   .sib .quiet-note { align-items: start; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .sib * { scroll-behavior: auto; transition: none !important; } }
+.endpoint-editor { display: grid; gap: 16px; margin-bottom: 24px; min-width: 0; }
+.endpoint-editor > * { min-width: 0; }
+.endpoint-editor .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.endpoint-editor > button { justify-self: start; }
+.endpoint-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 160px); gap: 16px; }
+.endpoint-fields input { width: 100%; box-sizing: border-box; }
+.endpoint-editor .detail-row strong, .endpoint-result p { overflow-wrap: anywhere; }
+.endpoint-warning p { margin-top: 8px; }
+.endpoint-result { padding: 16px; border: 1px solid var(--divider-color, #ddd); border-radius: 12px; }
+.sib .connection-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; max-width: 900px; }
+.sib .connection-layout > :is(.surface, .setup-disclosure) { margin: 0; }
+.sib .connection-layout #poll-interval { display: block; max-width: 200px; }
+.sib .connection-layout #poll-interval + button { margin-top: 16px; }
+.sib .connection-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.sib .connection-facts dt { color: var(--sib-muted); font-size: 13px; }
+.sib .connection-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.sib .connection-facts small { display: block; color: var(--sib-muted); font-size: 12px; }
+.sib .connection-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.sib .connection-choices button { display: grid; gap: 8px; text-align: left; white-space: normal; }
+.sib .connection-choices span { font-size: 13px; font-weight: 400; color: var(--sib-muted); }
+.sib .connection-wizard button[aria-pressed="true"] { border-color: var(--sib-accent); background: var(--sib-tint); }
+.sib .connection-wizard-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.sib .connection-wizard .stepper { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.sib .connection-wizard .endpoint-editor { margin-bottom: 0; }
+.sib .endpoint-stage { display: grid; gap: 16px; min-width: 0; }
+.sib .connection-maintenance { padding-top: 16px; }
+.sib .connection-maintenance > button { margin-top: 16px; }
+.sib .recent-changes .section-heading { flex-wrap: wrap; }
+.sib .recent-changes .detail-row { overflow-wrap: anywhere; }
+.sib .connection-layout > .remove-section { padding: 16px 0; border-width: 1px 0 0; border-radius: 0; background: transparent; }
+@media (max-width: 600px) { .sib .connection-facts, .sib .connection-choices { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .endpoint-fields { grid-template-columns: 1fr; } .endpoint-editor .detail-row { flex-wrap: wrap; gap: 8px; } }

@@ -235,7 +235,9 @@ class BinaryTransport:
                             management_reply = (self.callback_connection
                                 and (frame.code, frame.address) == (0x0102, 255)
                                 and ((request.function == 1 and (request.code, request.address) == (0, 1))
-                                     or (request.function == 2 and (request.code, request.address) == (1, 1))))
+                                      or (request.function == 2 and (request.code, request.address) == (1, 1))
+                                      or (request.function == 3 and (request.code, request.address) == (1, 1)
+                                          and self.callback_identity_route == (0x0102, 255))))
                             if management_reply:
                                 self._callback_management_route = (frame.code, frame.address)
                                 self.emit("callback_management_route", tid=frame.tid, function=frame.function,
@@ -335,6 +337,17 @@ class BinaryTransport:
         # native read-probe candidate. Native profile/CRC/slave checks still apply.
         self.callback_identity_route = self._callback_management_route
         return {**identity, "identity_method": "binary_fc2_parameter_2"}
+
+    async def set_collector(self, parameter, value):
+        """Only reviewed endpoint/apply setters; never an arbitrary FC3 API."""
+        from .collector_endpoint import parse_endpoint
+        if parameter == 21:
+            parse_endpoint(value)
+        elif parameter != 29 or value != "1":
+            raise ValueError("collector_parameter_write_unsupported")
+        data = await self.request(3, bytes([parameter]) + value.encode("ascii"), (1, 1))
+        if data != bytes((0, parameter)):
+            raise ValueError("collector_endpoint_command_unconfirmed")
 
     async def heartbeat(self):
         await self.request(1, heartbeat_payload(datetime.now(timezone.utc)), (0, 1))

@@ -8,6 +8,12 @@ class SolarInverterBridgePanel extends HTMLElement {
     this._tab = "overview";
     this._search = "";
     this._disclosures = {};
+    this._endpointState = {};
+    this._endpointChecks = {};
+    this._endpointCheckErrors = {};
+    this._endpointObserved = {};
+    this._endpointAck = {};
+    this._endpointOps = {};
   }
 
   set hass(hass) {
@@ -21,6 +27,7 @@ class SolarInverterBridgePanel extends HTMLElement {
         this._pending = saved.pending || {};
         this._results = saved.results || {};
         this._baselines = saved.baselines || {};
+        this._endpointOps = saved.endpointOps || {};
       } catch (_) {
         this._error = "Saved drafts could not be loaded.";
       }
@@ -85,12 +92,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       if (this._routerHints?.[key]) hints.set(key, this._routerHints[key]);
     }
     hints.set("addresses", JSON.stringify(this._routerHints?.addresses || []));
-    return "/solar_inverter_bridge/routers.html?v=0.25.0#" + hints.toString();
+    return "/solar_inverter_bridge/routers.html?v=0.26.0#" + hints.toString();
   }
 
   async _loadCollectorDomains() {
     try {
-      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.25.0");
+      const response = await fetch("/solar_inverter_bridge/collector-domains.json?v=0.26.0");
       if (!response.ok) throw new Error("Domain catalogue unavailable");
       this._collectorDomains = await response.json();
     } catch (_) {
@@ -118,6 +125,12 @@ class SolarInverterBridgePanel extends HTMLElement {
         if (pending && record) this._operationResult(device.device_id, record);
       }
       this._loadError = "";
+      const latestEndpoint = this._status.devices?.find(d=>d.device_id===this._device)?.operations?.find(o=>o.setting_key==='collector_server_endpoint');
+      const cachedEndpoint = this._endpointState[this._device]?.latest_operation;
+      if (this._device && this._tab === 'connection' && (!this._endpointState[this._device]
+          || (latestEndpoint && (latestEndpoint.operation_id!==cachedEndpoint?.operation_id || latestEndpoint.unresolved!==cachedEndpoint?.unresolved)))) {
+        try { await this._endpointHistory(this._device); } catch (_) { /* Explicit Read current address can retry. */ }
+      }
     } catch (error) {
       this._loadError = error.message || "Unable to read the bridge.";
     } finally {
@@ -147,7 +160,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       'network': () => sources((value('allowed-sources') || '').split(/[,\s]+/).filter(Boolean)) !== sources(this._status.allowed_sources || []),
       'bootstrap-save': () => value('bootstrap-preference') !== (this._status.bootstrap_preference || 'auto'),
       'incident-configure': () => checked('incident-enabled') !== (this._status.incidents?.enabled !== false),
-      'save-connection': device => connection({method:value('connection-method'), collector_ip:value('collector-ip'), callback_host:value('callback-host'), callback_port:value('callback-port'), udp_port:value('callback-udp-port')}) !== connection(device.connection_options || {}),
+      'save-connection': device => connection(this._connectionFlow?.device === device.device_id ? this._connectionConfig(device) : {method:value('connection-method'), collector_ip:value('collector-ip'), callback_host:value('callback-host'), callback_port:value('callback-port'), udp_port:value('callback-udp-port')}) !== connection(device.connection_options || {}),
     };
     for (const [action, changed] of Object.entries(comparisons)) {
       this.querySelectorAll(`button[data-action="${action}"]`).forEach(button => {
@@ -166,6 +179,12 @@ class SolarInverterBridgePanel extends HTMLElement {
         : 'All changes saved.');
       if (recording.textContent !== text) recording.textContent = text;
       recording.classList.toggle('unsaved', changed);
+    }
+    this._updateEndpointButtons();
+    const next = this.querySelector('[data-action="connection-next"]');
+    if (next && this._connectionFlow?.step === 1) {
+      const device = this._status.devices.find(d => d.device_id === this._connectionFlow.device);
+      if (device) next.disabled = this._busy || !this._connectionCanReview(device);
     }
   }
 
@@ -195,7 +214,7 @@ class SolarInverterBridgePanel extends HTMLElement {
 
   _saveDrafts() {
     try {
-      localStorage.setItem(this._storageKey, JSON.stringify({drafts: this._drafts, baselines: this._baselines, pending: this._pending, results: this._results}));
+      localStorage.setItem(this._storageKey, JSON.stringify({drafts: this._drafts, baselines: this._baselines, pending: this._pending, results: this._results, endpointOps: this._endpointOps}));
       return true;
     } catch (_) {
       this._error = "Browser storage is unavailable. The request was not sent.";
@@ -317,6 +336,11 @@ class SolarInverterBridgePanel extends HTMLElement {
   }
 
   _changeText(record, status) {
+    if (record?.setting_key === 'collector_server_endpoint') {
+      if (record.unresolved) return 'Cloud assignment operation is waiting for confirmation';
+      if (record.collector_action === 'apply') return 'Collector Apply request accepted; reconnection is checked separately';
+      return 'Cloud assignment: ' + String(record.last_observed_value || record.desired_value || 'check the collector');
+    }
     const name = this._parameterName(status, record?.setting_key);
     const next = record?.desired_value;
     const previous = record?.previous_value;
@@ -340,6 +364,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     const uncertain = pending || shown.unresolved;
     const id = pending?.operation_id || shown.operation_id;
     if (!id) return "";
+    if (shown.setting_key === 'collector_server_endpoint') return `<section class="operation attention"><div><h3>Cloud assignment operation</h3><p>Check collector operations and recovery on the Connection page.</p><button data-action="endpoint-open" data-device="${this._escape(device)}">Open Cloud assignment</button></div></section>`;
     const when = this._formatTime(shown.resolved_at || shown.created_at);
     const actor = shown.actor_name ? ` · ${this._escape(shown.actor_name)}` : "";
     return `<section class="operation ${uncertain ? "attention" : ""}" aria-live="polite">
@@ -360,11 +385,12 @@ class SolarInverterBridgePanel extends HTMLElement {
     const selected = this._device && devices.find(item => item.device_id === this._device);
     const body = !this._status ? '<section class="empty-state"><h2>Connecting to your bridge…</h2><p>Reading the saved devices and their latest measurements.</p></section>' : this._wizard ? this._wizardView(status) : selected ? this._deviceView(selected, status) : this._home(status);
     const firstSetup = !selected && !devices.length;
-    const support = this._wizard ? "" : firstSetup ? this._disclosure("home-help", "Connection help and diagnostics", this._compatibilityView(status, false), this._reportOpen) : this._compatibilityView(status);
-    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.25.0"><div class="sib"></div>`;
+    const support = this._wizard || selected ? "" : this._disclosure("home-help", "Diagnostics", this._compatibilityView(status, !firstSetup));
+    const flowError = selected && this._tab === 'connection' && this._connectionFlow?.device === selected.device_id;
+    if (!this.querySelector(".sib")) this.innerHTML = `<link rel="stylesheet" href="/solar_inverter_bridge/panel.css?v=0.26.0"><div class="sib"></div>`;
     this.querySelector(".sib").innerHTML = `<header class="appbar"><button class="icon-button" aria-label="Open Home Assistant menu" data-action="menu">${this._icon("menu")}</button>
       <img class="brand-logo" src="/solar_inverter_bridge/icon.png" srcset="/solar_inverter_bridge/icon@2x.png 2x" width="32" height="32" alt=""><span class="brand">Solar Inverter Cloud Bridge</span><span class="local-label">Local connection</span></header>
-      <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || this._error ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
+      <main class="${this._wizard || firstSetup ? "setup-layout" : ""}">${this._loadError || (this._error && !flowError) ? `<div class="banner attention" role="alert">${this._icon("info")}<span>${this._escape(this._errorMessage(this._loadError || this._error))}</span><button class="text-button" data-action="dismiss">Dismiss</button></div>` : ""}${body}${support}</main>${this._removeDialog(status)}`;
     this.querySelectorAll("details[data-disclosure]").forEach(details => {
       if (details.dataset.disclosure in this._disclosures) details.open = this._disclosures[details.dataset.disclosure];
       details.querySelector("summary").onclick = () => { this._disclosures[details.dataset.disclosure] = !details.open; };
@@ -387,14 +413,33 @@ class SolarInverterBridgePanel extends HTMLElement {
         if (input.id.startsWith("edit-")) this._updateEditorActions(input);
         this._saveDrafts();
         this._updateSaveButtons();
-        if (input.id === 'incident-watch-device') {
+        if (input.id === 'endpoint-host' || input.id === 'endpoint-port') {
+          delete this._endpointChecks[this._device];
+          delete this._endpointCheckErrors[this._device];
+          this._endpointAck[this._device] = false;
+          this._drafts[this._device + ':endpoint_restore'] = false;
+          this._saveDrafts();
+          const notice = this.querySelector('#endpoint-check-result');
+          if (notice) {
+            notice.textContent = 'Address changed. Check the destination again before saving.';
+            notice.setAttribute('role','status');
+            notice.classList.remove('banner','attention');
+          }
+          const ack = this.querySelector('#endpoint-risk');
+          if (ack) ack.checked = false;
+          this._updateEndpointButtons();
+        }
+        if (input.id === 'incident-watch-device' || input.id === 'connection-rewrite') {
           this._render();
-          this.querySelector('#incident-watch-device')?.focus();
+          this.querySelector('#'+input.id)?.focus();
         }
       };
     });
     const incidentRaw = this.querySelector('#incident-raw');
     if (incidentRaw) incidentRaw.oninput = () => { this._incidentRaw = incidentRaw.checked; };
+    const endpointRisk = this.querySelector('#endpoint-risk');
+    if (endpointRisk) endpointRisk.onchange = () => { this._endpointAck[this._device] = endpointRisk.checked; this._updateEndpointButtons(); };
+    this._updateEndpointButtons();
     this._updateSaveButtons();
     const search = this.querySelector("#parameter-search");
     if (search) search.oninput = () => {
@@ -524,7 +569,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     else content = `<span class="large-icon success">${this._icon("check")}</span><h2>${selected?.ready ? "Ready to add" : "Check the connection first"}</h2>
       <p>${selected?.ready ? "Two complete snapshots received. Supported settings will be available to edit after adding the inverter." : "Verification is no longer available. Go back and run the read-only check."}</p>
       <div class="review-row"><span>Name</span><strong>${this._escape(name)}</strong></div>
-      ${selected?.ready ? `<div class="review-row"><span>Profile</span><strong>${this._escape(selected.profile_name || selected.profile_id || "Protocol 4")}${selected.model_code != null ? " · Model " + this._escape(selected.model_code) : ""}${selected.experimental ? " · Experimental" : ""}</strong></div>${this._profileLayers(selected.profile_layers)}<button class="primary" data-action="enroll" data-value="${this._escape(selected.identity_sha256)}">Add inverter ${this._icon("arrow")}</button>` : `<button class="primary" data-action="${selected ? "verify" : "setup-connections"}" data-value="${this._escape(collector)}">${selected ? "Check connection again" : "Choose a connection"}</button>`}`;
+      ${selected?.ready ? `<div class="review-row"><span>Profile</span><strong>${this._escape(selected.profile_name || selected.profile_id || "Protocol 4")}${selected.model_code != null ? " · Model " + this._escape(selected.model_code) : ""}${selected.experimental ? " · Experimental" : ""}</strong></div>${this._profileLayers(selected.profile_layers)}<div class="subsection"><h3>Connect directly to Home Assistant</h3><p>You can replace the collector's cloud server with a local address. The default suggestion is <code>homeassistant.local</code>. We will check the destination and collector, show the risks and save the return address before you choose to write.</p><label class="switch-label"><input type="checkbox" data-draft="setup:endpoint_offer" ${this._draft('setup','endpoint_offer',false) ? 'checked' : ''}> Review Cloud assignment after adding</label><p class="field-help">Adding the inverter does not write a server address. You can also open Connection → Cloud assignment later.</p></div><button class="primary" data-action="enroll" data-value="${this._escape(selected.identity_sha256)}">Add inverter ${this._icon("arrow")}</button>` : `<button class="primary" data-action="${selected ? "verify" : "setup-connections"}" data-value="${this._escape(collector)}">${selected ? "Check connection again" : "Choose a connection"}</button>`}`;
     return `<div class="setup-flow"><div class="page-heading"><div><div class="eyebrow">STEP ${step + 1} OF 4</div><h1>${status.devices?.length ? "Add inverter" : "Add your first inverter"}</h1></div></div>
       <ol class="stepper" aria-label="Setup progress">${["Name", "Connect", "Check", "Add"].map((label, index) => `<li ${index === step ? 'aria-current="step"' : ""} class="${index === step ? "active" : index < step ? "complete" : ""}"><span>${index < step ? this._icon("check") : index + 1}</span><strong>${label}</strong></li>`).join("")}</ol>
       <section class="wizard-panel" aria-busy="${Boolean(this._checkingCollector)}">${content}<div class="wizard-footer">${step ? `<button class="text-button" data-action="setup-back">${this._icon("back")} Previous step</button>` : ""}<button class="text-button" data-action="back">Cancel setup</button></div></section>
@@ -706,8 +751,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       <div class="two-column"><section class="surface"><div class="section-heading"><h2>At a glance</h2></div>
        ${glance.map(([key, label]) => row(key, label)).join("")}
        ${diagnostics.length ? `<h3 class="overview-diagnostics-title">Diagnostics</h3>${diagnostics.map(sensor => row(sensor.key, this._sensorName(device, sensor), sensor)).join("")}` : ""}</section>
-      <section class="surface access-summary">${this._modeSummary(device, "tab")}</section></div>
-      ${this._operationView(device.device_id)}`;
+       ${this._recentChanges(device, this._status)}</div>`;
+  }
+
+  _recentChanges(device, status) {
+    const rows = (device.operations || []).map(record => `<div class="detail-row"><span>${this._escape(this._changeText(record,status))}<small class="history-time">${this._escape(this._formatTime(record.resolved_at || record.created_at))}${record.actor_name ? ' · '+this._escape(record.actor_name) : ''}</small></span></div>`).join('');
+    return `<section class="surface recent-changes"><div class="section-heading"><h2>Recent changes</h2><button data-action="journal-open" data-device="${this._escape(device.device_id)}">Full journal</button></div>${rows || '<p>No recorded changes yet.</p>'}<p class="field-help">Latest retained operations. The full command journal is available in Activity.</p></section>`;
   }
 
   _reading(device, key) {
@@ -715,50 +764,284 @@ class SolarInverterBridgePanel extends HTMLElement {
     return reading?.value == null ? "—" : `${this._escape(this._valueLabel(reading.value))} <span class="unit">${this._escape(reading.unit || "")}</span>`;
   }
 
-  _connectionView(device, status) {
-    return `<div class="two-column"><section class="surface"><div class="section-heading"><h2>Collector connection</h2>${this._statusChip(device)}</div>
-      <div class="detail-row"><span>Transport</span><strong>${device.transport === "binary" ? "Binary EyeBond" : "AT / raw RTU"}</strong></div><div class="detail-row"><span>Listener ports</span><strong>${(status.listeners || [{port:502},{port:18899},{port:38899}]).filter(p=>p.bound!==false).map(p=>this._escape(p.port)).join(" · ")}</strong></div>
-      <div class="detail-row"><span>Connection preference</span><strong>${this._escape({auto:"Automatic",callback:"Local callback",redirect:"Redirected connection"}[device.connection_options?.method || "redirect"])}</strong></div>
-      <div class="detail-row"><span>Active TCP port</span><strong>${this._escape(device.listener_port || "Not connected")}</strong></div>
-      ${device.connection_options?.collector_ip ? `<div class="detail-row"><span>Collector IP</span><strong>${this._escape(device.connection_options.collector_ip)}</strong></div>` : ""}
-      ${device.connection_error ? `<p class="banner attention">${this._escape(device.connection_error)}. Check the collector identity before reconnecting.</p>` : ""}
-      ${device.route ? `<div class="detail-row"><span>Outer route / inner slave</span><strong>${this._escape(device.route.outer.join("/"))} / ${this._escape(device.route.inner_slave)}</strong></div>` : ""}
-      <div class="detail-row"><span>Protocol profile</span><strong>${this._escape(device.profile_layers?.base_map?.name || device.profile_id?.replaceAll("_", " ") || "Not identified")}</strong></div>
-      <div class="detail-row no-line"><span>Last complete reading</span><strong>${this._age(device)}</strong></div>
-      ${this._connectionMethodForm(status, device)}
-      <div class="subsection"><h3>Wi-Fi module</h3>
-      ${(device.transport === "binary" ? [["firmware_version", "Firmware"], ["hardware_version", "Hardware"]] : [["firmware_version", "Firmware"], ["at_version", "AT version"], ["module_type", "Module type"], ["wifi_status", "Wi-Fi status"], ["cloud_assignment", "Cloud assignment"]]).map(([key, label], index, list) => `<div class="detail-row${index === list.length - 1 ? " no-line" : ""}"><span>${label}</span><strong>${this._escape(device.module?.[key] || "Not read")}</strong></div>`).join("")}
-      <p class="field-help">These are read from the collector. Cloud assignment is never written back.</p>
-      <p class="field-help">${device.module?.read_at ? `Last read ${this._escape(this._formatTime(device.module.read_at))}.` : "Not read yet."}</p>
-      <button data-action="module-info" data-device="${device.device_id}">Read module details</button></div></section>
-      <section class="surface"><h2>Data collection</h2><p>These settings affect the bridge's polling, not the inverter's electrical operation.</p>
-      <label class="switch-label"><input id="poll-enabled" type="checkbox" data-draft="${device.device_id}:enabled" ${this._draft(device.device_id, "enabled", device.enabled !== false) ? "checked" : ""}> Collect readings</label>
-       <p class="field-help">When unchecked, regular polling and new setting writes are paused. An exchange already in progress may finish. The inverter keeps operating; entities and history are retained. Existing TCP connections may keep heartbeats, but automatic callback requests stop.</p>
-       <label class="field-label" for="poll-interval">Pause between polls, seconds</label><input id="poll-interval" type="number" min="1" max="300" step="1" data-draft="${device.device_id}:poll_interval" value="${this._escape(this._draft(device.device_id, "poll_interval", device.poll_interval || 10))}">
-        <p class="field-help">1–300 seconds after each completed telemetry cycle, not a fixed update interval. A 10-second cycle with a 1-second pause starts the next cycle about 11 seconds later. Polls never overlap. Complete settings are refreshed at least ${this._escape(device.settings_refresh_interval || Math.max(30,device.poll_interval || 10))} seconds apart and after reconnects or writes. Every command still reads its baseline independently. Readings become stale after ${this._escape(device.telemetry_ttl_seconds || (60 + Number(device.poll_interval || 10)))} seconds without an update: 60 seconds plus the pause, so a 300-second pause remains current for 360 seconds.</p><button data-action="poll-options" data-device="${device.device_id}">Save collection settings</button>
-      <div class="subsection"><h3>Wi-Fi module</h3><p>Restarts only the collector module. Inverter settings stay unchanged, and readings pause until it reconnects.</p>
-       <button class="danger-outline" data-action="reset-module" data-device="${device.device_id}" ${device.capabilities?.module_reset === false ? "disabled" : ""}>Restart Wi-Fi module</button><p class="field-help">Collector reset is implemented for AT sessions. The binary reset command is not implemented; a different connection method alone does not establish support.</p><button data-action="compatibility-open">Collect compatibility report</button></div>
-      <div class="subsection"><h3>Allowed network sources</h3><p>Only new collector connections from these addresses are admitted. Use the router IP when the router translates source addresses.</p>
-      <label class="field-label" for="allowed-sources">IP addresses or CIDR networks</label><input id="allowed-sources" data-draft="network:sources" value="${this._escape(this._draft("network", "sources", (status.allowed_sources || []).join(", ")))}" placeholder="192.168.10.1">
-      <p class="field-help">Separate addresses with commas. An empty list rejects new connections. This setting is shared by all inverters.</p><button data-action="network">Save allowed sources</button></div></section></div>
-      ${device.profile_layers ? `<section class="surface">${this._profileLayers(device.profile_layers)}</section>` : ""}
-      <section class="surface remove-section"><div><h2>Remove this inverter</h2><p>Remove its saved connection and bridge entities. This does not reset the inverter.</p>${device.unresolved ? '<p class="field-help">Resolve the pending operation first.</p>' : ""}</div><button class="danger-outline" data-action="remove" data-device="${device.device_id}" ${device.unresolved || this._pending[device.device_id] ? "disabled" : ""}>Remove inverter</button></section>`;
+  async _endpointHistory(device) {
+    const history = await this._hass.callWS({type:'solar_inverter_bridge/collector_endpoint', device_id:device, action:'state'});
+    this._endpointState[device] = history;
+    const pending = this._endpointOps[device];
+    if (pending?.request?.operation_id === history.latest_operation?.operation_id) {
+      pending.result = history.latest_operation;
+      this._saveDrafts();
+    }
+    return history;
+  }
+
+  _endpointRecord(device) {
+    const local = this._endpointOps[device];
+    if (local?.request && !local.result) return {operation_id:local.request.operation_id, request:{...local.request,collector_action:local.request.action}, unresolved:true};
+    return this._endpointState[device]?.latest_operation || local?.result;
+  }
+
+  _endpointNeedsApply(record) {
+    return record && ['write','restore'].includes(record.request?.collector_action) && !record.unresolved
+      && (record.outcome === 'confirmed' || record.resolution === 'readback_matched');
+  }
+
+  _endpointTarget(device) {
+    return `${String(this._draft(device,'endpoint_host','homeassistant.local')).trim()},${this._draft(device,'endpoint_port',18899)},TCP`;
+  }
+
+  _updateEndpointButtons() {
+    const id = this._device;
+    const device = this._status?.devices?.find(d => d.device_id === id);
+    if (!device) return;
+    const check = this._endpointChecks[id];
+    const record = this._endpointRecord(id);
+    const fresh = check && check.requested_endpoint === this._endpointTarget(id) && Date.now()-Date.parse(check.read_at) < 60000;
+    const blocked = this._busy || !device.connected || device.unresolved || record?.unresolved;
+    const save = this.querySelector('[data-action="endpoint-save"]');
+    if (save) save.disabled = Boolean(blocked || !fresh || !this._endpointAck[id] || check.endpoint === check.requested_endpoint);
+    const apply = this.querySelector('[data-action="endpoint-apply"]');
+    if (apply) apply.disabled = Boolean(blocked || !this._endpointAck[id] || !this._endpointNeedsApply(record));
+    const accept = this.querySelector('[data-action="endpoint-accept"]');
+    if (accept) accept.disabled = Boolean(this._busy || !this._endpointAck[id] || !this._endpointObserved[id] || !device.connected);
+  }
+
+  _endpointEditor(device, stage = 'full') {
+    const id = device.device_id, esc = value => this._escape(value);
+    const history = this._endpointState[id] || {};
+    const observed = this._endpointObserved[id];
+    const record = this._endpointRecord(id);
+    const checked = this._endpointChecks[id];
+    const checkError = this._endpointCheckErrors[id];
+    const pending = this._endpointOps[id];
+    const current = observed?.endpoint || device.module?.cloud_assignment || 'Read the collector to get its current address';
+    const addressStage = ['full','address'].includes(stage);
+    const reviewStage = ['full','review'].includes(stage) || (stage === 'result' && (record?.unresolved || this._endpointNeedsApply(record)));
+    const resultStage = ['full','result'].includes(stage);
+    const localResult = Boolean(record?.write_plan?.resolved_addresses?.length && record.write_plan.resolved_addresses.every(ip => this._routerHints?.addresses?.some(a => a.address === ip)));
+    const newConnection = Boolean(observed && record?.request?.collector_action === 'apply'
+      && observed.endpoint === record.request.value && observed.session_ref !== record.write_plan?.session_ref
+      && observed.listener_port === Number(String(record.request.value).split(',')[1]) && device.connection_options?.method === 'redirect');
+    return `<section class="${stage === 'full' ? 'surface ' : ''}endpoint-editor" id="cloud-assignment"><h3>Collector server address</h3>
+      <p ${addressStage ? '' : 'hidden'}>Change the server the Wi-Fi collector connects to. This setting can survive a restart.</p>
+      <div class="detail-row"><span>Last reported address</span><strong>${esc(current)}</strong></div>
+      <div class="detail-row"><span>Saved return address</span><strong>${esc(history.saved_endpoint || 'Saved on the server before the first write')}</strong></div>
+      <p class="field-help">${observed ? `Collector identity and address read at ${esc(this._formatTime(observed.read_at))}.` : 'Opening this page does not query or change the collector.'}</p>
+      ${!addressStage ? `<div class="detail-row"><span>Requested address</span><strong>${esc(stage==='result' ? record?.request?.value || this._endpointTarget(id) : this._endpointTarget(id))}</strong></div>` : ''}
+      <div class="endpoint-stage" ${addressStage ? '' : 'hidden'}>
+      <div class="actions"><button data-action="endpoint-read" data-device="${esc(id)}" ${device.connected ? '' : 'disabled'}>Read current address</button>
+      <button data-action="endpoint-restore" data-device="${esc(id)}" ${history.saved_endpoint ? '' : 'disabled'}>Use saved return address</button>
+      <button data-action="endpoint-local" data-device="${esc(id)}">Use local address</button>
+      ${this._routerHints?.ha_ip ? `<button data-action="endpoint-ip" data-device="${esc(id)}">Use HA LAN IP</button>` : ''}</div>
+      <div class="endpoint-fields"><div><label class="field-label" for="endpoint-host">Server hostname or IPv4 address</label><input id="endpoint-host" autocomplete="off" maxlength="70" aria-describedby="endpoint-check-result" data-draft="${esc(id)}:endpoint_host" value="${esc(this._draft(id,'endpoint_host','homeassistant.local'))}"></div>
+      <div><label class="field-label" for="endpoint-port">TCP port</label><input id="endpoint-port" type="number" min="1" max="65535" step="1" aria-describedby="endpoint-check-result" data-draft="${esc(id)}:endpoint_port" value="${esc(this._draft(id,'endpoint_port',18899))}"></div></div>
+      <p class="field-help">New local destinations must resolve to this HA and a primary Bridge listener. A .local name may work in HA but not on the collector; verify its DNS/mDNS support or use a stable LAN IP. Restoring the server-saved address can return the collector to an external cloud.</p>
+      <button data-action="endpoint-prepare" data-device="${esc(id)}" ${device.connected ? '' : 'disabled'}>Check address and collector</button>
+      <p id="endpoint-check-result" role="${checkError ? 'alert' : 'status'}" ${checkError ? 'class="banner attention"' : ''}>${checkError ? esc(this._errorMessage(checkError)) : checked ? `Collector replied. Destination ${esc(checked.requested_endpoint)} resolves to ${esc(checked.resolved_addresses.join(', '))}. ${checked.destination_is_local ? 'The HA listener is ready.' : 'Saved external return destination; its reachability is not verified.'} This check does not prove resolution by the collector.` : 'Check the destination and get a fresh collector response before saving. No setting is written by the check.'}</p>
+      </div><div class="endpoint-stage" ${reviewStage ? '' : 'hidden'}>
+      ${stage === 'review' && checked ? `<p>Collector replied. Destination: ${esc(checked.resolved_addresses.join(', '))}. ${checked.destination_is_local ? 'Local HA listener checked.' : 'Saved external destination; reachability is not verified.'}</p>` : ''}
+      <div class="banner attention endpoint-warning"><div><strong>Connection may be lost</strong><p>A wrong address, DNS failure or unavailable HA can stop monitoring and remote control. Direct local connection can stop vendor-app updates. Save the return address and have a working local recovery method before changing it. A restart does not undo the change.</p></div></div>
+      <label class="switch-label"><input id="endpoint-risk" type="checkbox" ${this._endpointAck[id] ? 'checked' : ''}> I understand the connection risk and have reviewed the return address and recovery options.</label>
+      </div><div class="actions" ${addressStage && stage !== 'full' ? 'hidden' : ''}><button class="primary" data-action="endpoint-save" data-device="${esc(id)}" ${['full','review'].includes(stage) ? '' : 'hidden'} disabled>Save and apply address</button>
+      ${this._endpointNeedsApply(record) ? `<button data-action="endpoint-apply" data-device="${esc(id)}" disabled>Apply verified address</button>` : ''}
+      ${record ? `<button data-action="endpoint-check" data-device="${esc(id)}" ${device.connected ? '' : 'disabled'}>Check change result</button>` : ''}
+      ${pending?.notFound && !pending.result ? `<button data-action="endpoint-retry" data-device="${esc(id)}">Retry original request ID</button>` : ''}</div>
+      ${record && resultStage ? `<div class="endpoint-result" role="status"><strong>${record.unresolved ? 'Result uncertain — do not repeat the change' : record.request?.collector_action === 'apply' ? 'Apply request accepted; check the new connection' : this._endpointNeedsApply(record) ? 'Address readback matched; Apply is still needed' : 'Last operation recorded'}</strong>
+      <p>${esc(record.request?.value || '')}${record.reason ? ' · '+esc(this._valueLabel(record.reason)) : ''}</p>
+      ${record.unresolved ? `<p>Check reads the collector and journal without resending a write. If the current address is acceptable, you can explicitly keep it and clear the unresolved barrier; this does not prove Apply or persistence.</p><button data-action="endpoint-accept" data-device="${esc(id)}" disabled>Accept current address without resending</button>` : ''}
+      <p>${newConnection ? 'New primary connection observed with the requested address.' : 'New primary connection has not been confirmed by this screen.'} Restart/power-loss persistence is not verified by this change.</p>
+      ${localResult && record.request?.collector_action === 'apply' && device.connection_options?.method !== 'redirect' && !record.unresolved ? `<button data-action="endpoint-primary" data-device="${esc(id)}">Use direct connection</button><p class="field-help">Select the primary connection, then check the result. The server address is not written again.</p>` : ''}</div>` : ''}
+      ${this._disclosure('endpoint-recovery:'+id,'How to restore access',`<p>Saved return address: <strong>${esc(history.saved_endpoint || 'Read and save the current address before changing it')}</strong>.</p><ol><li>If a management connection still works, use the saved return address above, check it, then save and apply.</li><li>If the primary connection is lost, use Connection method → Local connection (UDP callback) with the collector's IP. Callback support depends on firmware; it is not a guaranteed rescue path. An unresolved operation must be checked or explicitly accepted before changing the preference.</li><li>If no management connection returns, use a previously verified local Bluetooth or AP interface capable of setting the server address. A Wi-Fi setup page or cloud-only app does not establish this capability.</li></ol><p>Keep a copy of the original address outside HA. Do not assume a power cycle or factory reset will restore it. Reference Wi-Fi.DTU 8.50.12.3 / AT 1.11 retained the address after a software restart; full power-loss recovery and other firmware remain unverified.</p>`)}
+      </section>`;
+  }
+
+  async _endpointSend(device, request) {
+    this._endpointOps[device] = {request: structuredClone(request)};
+    if (!this._saveDrafts()) throw new Error('Browser storage is unavailable. The request was not sent.');
+    const result = await this._hass.callWS(request);
+    this._endpointOps[device].result = result;
+    this._saveDrafts();
+    await this._endpointHistory(device);
+    return result;
+  }
+
+  async _endpointApply(device, record) {
+    if (!this._endpointNeedsApply(record)) throw new Error('Check the recorded write before applying it.');
+    const observed = await this._hass.callWS({type:'solar_inverter_bridge/collector_endpoint', device_id:device, action:'read'});
+    this._endpointObserved[device] = observed;
+    if (observed.endpoint !== record.request.value) throw new Error('collector_endpoint_baseline_changed');
+    return this._endpointSend(device, {type:'solar_inverter_bridge/collector_endpoint', device_id:device, action:'apply',
+      operation_id:crypto.randomUUID(), value:observed.endpoint, expected_value:observed.endpoint,
+      expected_transport:observed.transport, expected_listener_port:observed.listener_port, acknowledged:true});
+  }
+
+  async _endpointAction(action, device) {
+    if (action === 'open') { this._connectionFlow = {device,step:3,endpointOnly:true}; return this._navigate(`sib/device/${device}/connection`); }
+    if (this._busy) return;
+    if (['restore','local','ip'].includes(action)) {
+      const value = action === 'restore' ? this._endpointState[device]?.saved_endpoint : `${action === 'ip' ? this._routerHints?.ha_ip : 'homeassistant.local'},18899,TCP`;
+      if (!value) return;
+      const [host,port] = value.split(',');
+      Object.assign(this._drafts, {[device+':endpoint_host']:host, [device+':endpoint_port']:port, [device+':endpoint_restore']:action === 'restore'});
+      delete this._endpointChecks[device]; delete this._endpointCheckErrors[device]; this._endpointAck[device] = false; this._saveDrafts(); return this._render();
+    }
+    const check = this._endpointChecks[device];
+    const record = this._endpointRecord(device);
+    if (action === 'save' && (!check || check.requested_endpoint !== this._endpointTarget(device) || Date.now()-Date.parse(check.read_at) >= 60000 || !this._endpointAck[device])) return;
+    if (['apply','accept'].includes(action) && !this._endpointAck[device]) return;
+    if (action === 'prepare' && !this.querySelector('#endpoint-port')?.reportValidity()) return;
+    if (action === 'prepare') delete this._endpointCheckErrors[device];
+    this._busy = true; this._error = ''; this._render();
+    const base = {type:'solar_inverter_bridge/collector_endpoint',device_id:device};
+    try {
+      let observed;
+      if (action === 'read') observed = await this._hass.callWS({...base,action:'read'});
+      if (action === 'prepare') {
+        delete this._endpointChecks[device]; this._endpointAck[device] = false;
+        observed = await this._hass.callWS({...base,action:this._draft(device,'endpoint_restore',false) ? 'prepare_restore' : 'prepare',value:this._endpointTarget(device)});
+        this._endpointChecks[device] = observed;
+      }
+      if (action === 'save') {
+        const result = await this._endpointSend(device,{...base,action:check.prepared_action,operation_id:crypto.randomUUID(),
+          value:check.requested_endpoint,expected_value:check.endpoint,expected_transport:check.transport,
+          expected_listener_port:check.listener_port,acknowledged:true});
+        delete this._endpointChecks[device];
+        if (this._endpointNeedsApply(result)) await this._endpointApply(device,result);
+      }
+      if (action === 'apply') await this._endpointApply(device,record);
+      if (action === 'retry') {
+        const local = this._endpointOps[device];
+        if (local?.notFound && !local.result) await this._endpointSend(device, structuredClone(local.request));
+      }
+      if (action === 'check' || action === 'accept') {
+        if (!record?.operation_id) throw new Error('No collector operation to check.');
+        observed = await this._hass.callWS({...base,action:action === 'accept' ? 'accept_current' : 'check',operation_id:record.operation_id,
+          ...(action === 'accept' ? {acknowledged:true,expected_value:this._endpointObserved[device]?.endpoint} : {})});
+        if (this._endpointOps[device]?.request?.operation_id === record.operation_id) {
+          this._endpointOps[device].result = observed.operation; this._saveDrafts();
+        }
+      }
+      if (action === 'primary') {
+        const current = this._status.devices.find(d => d.device_id === device);
+        if (!record || record.unresolved || record.request?.collector_action !== 'apply') throw new Error('Check Apply before changing the connection preference.');
+        await this._hass.callWS({type:'solar_inverter_bridge/set_connection',device_id:device,request_id:crypto.randomUUID(),
+          ...current.connection_options,method:'redirect'});
+      }
+      if (observed) {
+        this._endpointObserved[device] = observed; this._endpointState[device] = observed.history;
+        if (this._endpointChecks[device] && observed.endpoint !== this._endpointChecks[device].endpoint) {
+          delete this._endpointChecks[device]; this._endpointAck[device] = false;
+        }
+      }
+    } catch (error) {
+      const message = error.message || 'Collector request was not confirmed. Check its result before another change.';
+      if (action === 'prepare') this._endpointCheckErrors[device] = message;
+      else this._error = message;
+      const unsent = ['invalid_collector_endpoint','collector_destination_not_local','collector_destination_not_listening',
+        'collector_endpoint_baseline_changed','collector_restore_target_mismatch','collector_operation_context_required',
+        'collector_endpoint_risk_acknowledgement_required','device_busy_or_unresolved','gaierror'];
+      if (unsent.includes(error.message) && this._endpointOps[device] && !this._endpointOps[device].result) {
+        delete this._endpointOps[device]; delete this._endpointChecks[device]; this._saveDrafts();
+      }
+      if (action === 'check' && String(error.message).includes('collector_operation_not_found') && this._endpointOps[device]) {
+        this._endpointOps[device].notFound = true; this._saveDrafts();
+        this._error = 'The server has no recorded operation for this ID. Nothing is retried automatically. You may retry the original request ID after reviewing it.';
+      }
+    } finally {
+      if (action === 'save') delete this._endpointChecks[device];
+      if (['save','apply','accept','retry'].includes(action)) this._endpointAck[device] = false;
+      try { await this._endpointHistory(device); } catch (_) { /* Retain the request for explicit result checks. */ }
+      if (['save','apply','retry','accept'].includes(action) && this._connectionFlow?.device === device && this._endpointOps[device]) this._connectionFlow.step = 3;
+      this._busy = false; await this._load(); this._render();
+      if (action === 'prepare' && this._device === device && this._tab === 'connection') {
+        this.querySelector('#endpoint-check-result')?.scrollIntoView({block:'nearest'});
+      }
+    }
+  }
+
+  _connectionConfig(device) {
+    const scope=device.device_id+':connection', saved=device.connection_options || {};
+    return {method:this._draft(scope,'method',saved.method || 'redirect'),collector_ip:String(this._draft(scope,'collector_ip',saved.collector_ip || '')).trim(),
+      callback_host:String(this._draft(scope,'callback_host',saved.callback_host || this._routerHints?.ha_ip || '')).trim(),
+      callback_port:Number(this._draft(scope,'callback_port',saved.callback_port || 8899)),udp_port:Number(this._draft(scope,'udp_port',saved.udp_port || 58899))};
+  }
+
+  _connectionWritesEndpoint(device) {
+    return this._connectionFlow?.endpointOnly || (this._connectionConfig(device).method === 'redirect' && this._draft(device.device_id+':connection','rewrite',false));
+  }
+
+  _connectionCanReview(device) {
+    if (this._connectionWritesEndpoint(device)) {
+      const checked=this._endpointChecks[device.device_id];
+      return Boolean(checked && checked.requested_endpoint===this._endpointTarget(device.device_id) && Date.now()-Date.parse(checked.read_at)<60000);
+    }
+    const config=this._connectionConfig(device);
+    return config.method==='redirect' || ((!config.collector_ip && config.method==='auto') ||
+      Boolean(config.collector_ip && config.callback_host && config.callback_port>=1024 && config.callback_port<=65535 && config.udp_port>=1 && config.udp_port<=65535));
+  }
+
+  _connectionWizardView(device,status) {
+    const flow=this._connectionFlow,id=device.device_id,esc=v=>this._escape(v),scope=id+':connection';
+    const config=this._connectionConfig(device), step=flow.step, first=flow.endpointOnly?1:0;
+    const rewrite=this._connectionWritesEndpoint(device);
+    const method={redirect:'Direct to Home Assistant',callback:'Local callback',auto:'Automatic'}[config.method];
+    const request=(status.connection_requests || []).find(r=>r.request_id===this._drafts[scope+':connection_request']);
+    let content='';
+    if(step===0) content=`<h3>Choose how to connect</h3><div class="connection-choices">
+      <button data-action="connection-method" data-device="${esc(id)}" data-value="redirect" aria-pressed="${config.method==='redirect'}"><strong>Direct to Home Assistant</strong><span>The collector connects to HA on its own. Keep an existing DNS redirect or review a server-address change.</span></button>
+      <button data-action="connection-method" data-device="${esc(id)}" data-value="callback" aria-pressed="${config.method==='callback'}"><strong>Local callback</strong><span>HA requests a TCP connection from the collector using its local IP.</span></button></div>
+      ${this._disclosure('connection-mode-advanced:'+id,'Advanced',`<p>Automatic retains a usable owner and requests callback when disconnected if a collector IP is available.</p><button data-action="connection-method" data-device="${esc(id)}" data-value="auto" aria-pressed="${config.method==='auto'}">Use Automatic</button>`)}<p class="field-help">Selected: ${esc(method)}. Nothing is saved until you confirm.</p>`;
+    if(step===1) {
+      if(config.method==='redirect' || flow.endpointOnly) content=`${!flow.endpointOnly ? `<label class="switch-label"><input id="connection-rewrite" type="checkbox" data-draft="${esc(scope)}:rewrite" ${rewrite?'checked':''}> Change the collector's server address</label><p class="field-help">Leave this unchecked when the existing server is already redirected to HA. Checking it opens an explicit address check and risk review.</p>`:''}
+        ${rewrite?this._endpointEditor(device,'address'):`<h3>Use the existing server</h3><p>Only the bridge preference will change. Existing DNS/router routing must already bring the collector to this HA.</p><div class="detail-row"><span>Last reported server</span><strong>${esc(this._endpointObserved[id]?.endpoint || device.module?.cloud_assignment || 'Not read')}</strong></div>`}`;
+      else content=`<h3>Collector address</h3><label class="field-label" for="collector-ip">Wi-Fi collector IP address${config.method==='auto'?' (optional)':''}</label><input id="collector-ip" data-draft="${esc(scope)}:collector_ip" value="${esc(config.collector_ip)}" autocomplete="off"><p class="field-help">Use the collector's reachable LAN IP. The collector server address is not rewritten.</p>
+        ${this._disclosure('connection-callback-advanced:'+id,'Advanced',`<label class="field-label" for="callback-host">Home Assistant LAN IP</label><input id="callback-host" data-draft="${esc(scope)}:callback_host" value="${esc(config.callback_host)}"><label class="field-label" for="callback-port">Callback TCP port</label><input id="callback-port" type="number" min="1024" max="65535" data-draft="${esc(scope)}:callback_port" value="${config.callback_port}"><label class="field-label" for="callback-udp-port">Collector UDP port</label><input id="callback-udp-port" type="number" min="1" max="65535" data-draft="${esc(scope)}:udp_port" value="${config.udp_port}">`)}`;
+    }
+    if(step===2) content=rewrite ? `${!this._connectionCanReview(device)?'<p class="banner attention">The address check expired or the draft changed. Go back and check it again.</p>':''}${this._endpointEditor(device,'review')}` : `<h3>Review connection</h3><div class="detail-row"><span>Method</span><strong>${esc(method)}</strong></div>${config.method!=='redirect'?`<div class="detail-row"><span>Collector</span><strong>${esc(config.collector_ip || 'No callback target')}</strong></div><div class="detail-row"><span>HA callback address</span><strong>${esc(config.callback_host)}:${config.callback_port}</strong></div>`:''}<p>${config.method==='redirect'?'Save selects the primary channel. The collector server and router settings are not written.':'Save requests callback when needed and verifies the collector identity. Depending on firmware, callback can affect its cloud connection.'}</p><p class="field-help">${device.enabled===false?'Collection is paused: this saves the preference without sending a callback.':'An existing exchange finishes before the new connection is selected.'}</p><button class="primary" data-action="save-connection" data-device="${esc(id)}" ${device.unresolved?'disabled':''}>Save connection</button>`;
+    if(step===3) content=`<h3>Connection result</h3>${request?`<p role="status">${esc({saved_paused:'Connection preference saved. Collection is paused; no callback was sent.',waiting:'Callback requested. Waiting for the identified connection.',connected:'Collector connection identified.',waiting_for_connection:'Waiting for the primary connection.',timed_out:'Connection was not confirmed in time. Review the network settings.',failed:'Connection request failed; review its result.'}[request.state] || this._valueLabel(request.state))}</p>`:''}<p>${device.connected?'A collector channel is connected.':'Waiting for the collector.'} ${device.enabled===false?'Collection is paused.':device.stale?'Fresh inverter readings are not yet available.':'Inverter readings are fresh.'}</p><div class="detail-row"><span>Active channel</span><strong>${esc(device.transport || 'Not connected')} · TCP ${esc(device.listener_port || '—')}</strong></div>${rewrite?this._endpointEditor(device,'result'):''}`;
+    return `<section class="surface connection-wizard" id="connection-wizard"><div class="section-heading"><h2>${flow.restore?'Restore server address':flow.endpointOnly?'Collector change':'Change connection'}</h2><button class="text-button" data-action="connection-close">Close</button></div>
+      <ol class="stepper" aria-label="Connection change progress">${['Method','Address','Review','Result'].map((name,index)=>index<first?'':`<li class="${index===step?'active':index<step?'complete':''}" ${index===step?'aria-current="step"':''}><span>${index-first+1}</span><strong>${name}</strong></li>`).join('')}</ol>
+      ${content}${this._error?`<p class="banner attention" role="alert">${esc(this._errorMessage(this._error))}</p>`:''}
+      <div class="connection-wizard-actions">${step>first?'<button data-action="connection-back">Back</button>':''}${step<2?`<button class="primary" data-action="connection-next" data-device="${esc(id)}" ${step===1&&!this._connectionCanReview(device)?'disabled':''}>${step===0?'Continue':'Review changes'}</button>`:''}${step===3?'<button data-action="connection-close">Close review</button>':''}</div></section>`;
+  }
+
+  _connectionView(device,status) {
+    const id=device.device_id,esc=v=>this._escape(v),observed=this._endpointObserved[id];
+    const lastOperation=this._endpointState[id]?.latest_operation;
+    const reported=[{value:observed?.endpoint,at:observed?.read_at},
+      {value:device.module?.cloud_assignment,at:device.module?.read_at},
+      {value:lastOperation?.last_observed_value || lastOperation?.write_plan?.endpoint,
+       at:lastOperation?.last_observed_at || lastOperation?.write_plan?.read_at}]
+      .filter(item=>item.value).sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0))[0];
+    const address=reported?.value,readAt=reported?.at;
+    const active=device.listener_port===device.connection_options?.callback_port?'Local callback':device.connected?'Direct connection':'Not connected';
+    const saved=this._endpointState[id]?.saved_endpoint;
+    const endpointReview=this._endpointRecord(id)?.unresolved || this._endpointNeedsApply(this._endpointRecord(id));
+    const needsReview=device.unresolved || endpointReview;
+    const advanced=`<div class="connection-maintenance"><h3>Collector details</h3>
+      ${(device.transport==='binary'?[['firmware_version','Firmware'],['hardware_version','Hardware']]:[['firmware_version','Firmware'],['at_version','AT version'],['module_type','Module type'],['wifi_status','Wi-Fi signal']]).map(([key,label])=>`<div class="detail-row"><span>${label}</span><strong>${esc(device.module?.[key] || 'Not read')}</strong></div>`).join('')}<p class="field-help">${device.module?.read_at?'Last read '+esc(this._formatTime(device.module.read_at)): 'Read explicitly to refresh collector details.'}</p><button data-action="module-info" data-device="${esc(id)}">Read module details</button>
+      <div class="subsection"><h3>Network access</h3><p class="field-help">Shared by all Bridge devices. Admit the collector source, or the router IP if it translates source addresses.</p><label class="field-label" for="allowed-sources">Allowed IP addresses or CIDR networks</label><input id="allowed-sources" data-draft="network:sources" value="${esc(this._draft('network','sources',(status.allowed_sources || []).join(', ')))}"><p class="field-help">Separate addresses with commas. An empty list rejects new connections.</p><button data-action="network">Save allowed sources</button><a class="router-setup-link" href="${esc(this._routerGuideUrl())}" target="_blank" rel="noopener">Router setup</a></div>
+      <div class="subsection"><h3>Restart collector</h3><p>Readings pause until the Wi-Fi module reconnects. A restart does not restore an earlier server address.</p><button class="danger-outline" data-action="reset-module" data-device="${esc(id)}" ${device.capabilities?.module_reset===false?'disabled':''}>Restart Wi-Fi module</button><p class="field-help">AT reset is implemented; binary reset is not implemented.</p></div>
+      <div class="subsection"><h3>Recovery</h3><p>Saved return address: <strong>${esc(saved || 'No address saved before a write yet')}</strong>.</p><p class="field-help">Restore needs a working management channel. A previously verified IP callback or local BLE/AP server-setting interface may help if the primary link is lost. Neither a cloud-only app nor a factory reset is a guaranteed return path.</p><div class="actions"><button data-action="connection-restore" data-device="${esc(id)}" ${saved?'':'disabled'}>Restore saved address</button><button data-action="endpoint-open" data-device="${esc(id)}">Review collector operation</button></div></div></div>`;
+    return `<div class="connection-layout"><section class="surface connection-status"><div class="section-heading"><h2>Connection status</h2>${this._statusChip(device)}</div><dl class="connection-facts"><div><dt>Active connection</dt><dd>${active}</dd></div><div><dt>Collector</dt><dd>${esc(device.connection_options?.collector_ip || 'IP not saved')}</dd></div><div><dt>Last reported server</dt><dd>${esc(address || 'Not read')}<small>${readAt?'Read '+esc(this._formatTime(readAt)):'No current server query has been made.'}</small></dd></div><div><dt>Transport</dt><dd>${esc(device.transport || 'Unknown')} · TCP ${esc(device.listener_port || '—')}</dd></div></dl><div class="detail-row no-line"><span>Last complete reading</span><strong>${this._age(device)}</strong></div>${device.connection_error?`<p class="banner attention">${esc(device.connection_error)}</p>`:''}<button data-action="diagnostics-open" data-device="${esc(id)}">Diagnostics</button></section>
+      <section class="surface"><h2>Connection settings</h2><p>${esc({redirect:'Direct to Home Assistant',callback:'Local callback',auto:'Automatic'}[device.connection_options?.method || 'redirect'])}. Change the route, or review the collector's server address in one guided flow.</p><button class="primary" data-action="connection-start" data-device="${esc(id)}">Change connection</button>${needsReview?`<p class="field-help">A change needs confirmation or Apply. Review its result before another change.</p><button data-action="${endpointReview?'endpoint-open':'diagnostics-open'}" data-device="${esc(id)}">Review pending change</button>`:''}</section>
+      ${this._connectionFlow?.device===id?this._connectionWizardView(device,status):''}
+      <section class="surface"><h2>Data collection</h2><label class="switch-label"><input id="poll-enabled" type="checkbox" data-draft="${esc(id)}:enabled" ${this._draft(id,'enabled',device.enabled!==false)?'checked':''}> Collect readings</label><p class="field-help">When paused, polling and new setting writes are paused. The inverter keeps operating.</p><label class="field-label" for="poll-interval">Pause between polls, seconds</label><input id="poll-interval" type="number" min="1" max="300" step="1" data-draft="${esc(id)}:poll_interval" value="${esc(this._draft(id,'poll_interval',device.poll_interval || 10))}"><button data-action="poll-options" data-device="${esc(id)}">Save collection settings</button>
+      ${this._disclosure('polling-help:'+id,'How polling works',`<p>The pause is 1–300 seconds after a completed cycle; polls never overlap. Settings refresh no more often than every ${esc(device.settings_refresh_interval || 30)} seconds. Each write reads its baseline independently.</p><p>Telemetry expires after 60 seconds plus the polling pause (${esc(device.telemetry_ttl_seconds || (60+Number(device.poll_interval || 10)))} seconds here). Pausing retains entities/history and possible TCP heartbeats, stops automatic callbacks, and lets an existing exchange finish.</p>`)}</section>
+      ${this._disclosure('connection-advanced:'+id,'Advanced & maintenance',advanced)}
+      <section class="surface remove-section"><div><h3>Remove this inverter</h3><p>Remove its registration and entities from Home Assistant.</p></div><button class="danger-outline" data-action="remove" data-device="${esc(id)}" ${device.unresolved || this._pending[id]?'disabled':''}>Remove…</button></section></div>`;
   }
 
   _activityView(device, status) {
     const issue = device.last_issue || (status.last_error ? {code: status.last_error, occurred_at: status.last_error_at} : null);
     const pending = this._pending[device.device_id] || device.unresolved;
-    const changes = (device.operations || []).map(record => {
-      const actor = record.actor_name ? ` · ${this._escape(record.actor_name)}` : "";
-      return `<div class="detail-row"><span>${this._escape(this._changeText(record, status))}<small class="history-time">${this._escape(this._formatTime(record.resolved_at || record.created_at))}${actor}</small></span></div>`;
-    }).join("");
     return `${pending ? this._operationView(device.device_id) : ""}
-      ${changes ? `<section class="surface"><h2>Recent changes</h2>${changes}</section>` : `<section class="empty-state small"><span class="icon-tile">${this._icon("check")}</span><h2>No recorded changes</h2><p>Applied settings will show the parameter, previous value, new value, time, and who made the change.</p></section>`}
-      <section class="surface"><div class="section-heading"><h2>Connection health</h2><span class="heading-actions"><button data-action="journal" data-device="${device.device_id}">${this._icon("download")} Download journal</button><button data-action="download" data-device="${device.device_id}">${this._icon("download")} Download diagnostics</button></span></div>
+      <section class="surface" id="command-journal"><h2>Command journal</h2><p>Download all retained Bridge operation records across all inverters as JSON: operation IDs, requested values, outcomes and timestamps. This is not a raw TCP log.</p><p class="field-help">The maintenance journal can include private server addresses. Review it before sharing. Recent changes for this inverter are shown in Overview.</p><button data-action="journal" data-device="${device.device_id}">${this._icon("download")} Download full journal</button></section>
+      <section class="surface"><div class="section-heading"><h2>Connection health</h2><span class="heading-actions"><button data-action="download" data-device="${device.device_id}">${this._icon("download")} Download diagnostics</button></span></div>
       <div class="detail-row"><span>Listening for collectors</span><strong>${status.listening ? "Yes" : "No"}</strong></div><div class="detail-row"><span>Unresolved operations</span><strong>${device.unresolved || 0}</strong></div>
       <div class="detail-row"><span>Retry delay</span><strong>${device.poll_backoff_seconds || 0}s</strong></div><div class="detail-row"><span>Rejected connections</span><strong>${status.rejected || 0}</strong></div>
       <div class="detail-row"><span>Last recorded issue</span><strong>${issue ? this._escape(this._issueLabel(issue.code)) : "None recorded"}${issue ? `<small class="history-time">${this._escape(this._formatTime(issue.occurred_at))}${issue.stage ? " · " + this._escape(this._valueLabel(issue.stage)) : ""}</small>` : ""}</strong></div>
-       <p class="field-help">Diagnostics omit names, source addresses, credentials, and raw traffic. The journal export keeps operation IDs for maintenance and does not delete them. Repeated identical faults are recorded at most once a minute.</p></section>${this._incidentsView(status, device)}`;
+        <p class="field-help">Diagnostics omit names, source addresses, credentials, and raw traffic. Repeated identical faults are recorded at most once a minute.</p></section><div id="device-diagnostics">${this._compatibilityView(status,false)}${this._incidentsView(status, device)}</div>`;
   }
 
   _formatTime(value) {
@@ -771,7 +1054,7 @@ class SolarInverterBridgePanel extends HTMLElement {
   _compatibilityView(status, showSuggestions = true) {
     const capture = status.compatibility || {};
     const report = this._compatibility || {};
-    return `${showSuggestions ? this._profileSuggestions(status) : ""}<section class="surface compatibility-panel"><div class="section-heading"><h2>Compatibility and discovery</h2><button data-action="compatibility-toggle">${this._reportOpen ? "Close report tools" : "Collect compatibility report"}</button></div>
+    return `${showSuggestions ? this._profileSuggestions(status) : ""}<section class="surface compatibility-panel"><div class="section-heading"><h2>Diagnostics</h2><button data-action="compatibility-toggle">${this._reportOpen ? "Hide" : "Reports"}</button></div>
       ${(status.listeners || []).map(port => `<div class="detail-row"><span>TCP ${this._escape(port.requested_port)}</span><strong>${port.bound ? "Listening" : this._escape(`${port.error || "Unavailable"} (${port.errno ?? "unknown"})`)}</strong></div>`).join("")}
       ${(status.profile_catalogue || []).length ? `<details data-disclosure="profile-catalogue"><summary>Available protocol profiles (${status.profile_catalogue.length})</summary><p>Grouped by family; variants and fallback maps are not interchangeable protocols. Counts are implemented maxima: fields absent from a device remain unavailable. Unknown models can use a checked common map after acceptance.</p>${this._catalogueGroups(status.profile_catalogue)}</details>` : ""}
       ${this._device && this._tab === 'activity' ? '' : this._disclosure('incident-diagnostics', 'Diagnostics: local incidents and manual reports', this._incidentsView(status))}
@@ -968,18 +1251,26 @@ class SolarInverterBridgePanel extends HTMLElement {
       unsupported_or_unconfirmed_identity: "Unsupported inverter signature"}[code] || this._valueLabel(code);
   }
 
-  _downloadJournal(offset = 0, records = []) {
-    return this._call({type: "solar_inverter_bridge/journal", offset, limit: 200}, page => {
-      const next = records.concat(page.records || []);
-      if ((page.records || []).length < page.limit) {
-        const payload = {exported_at: new Date().toISOString(), retained: page.retained, max_operations: page.max_operations, records: next};
-        const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"}));
-        const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-journal.json"; link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        return;
+  async _downloadJournal() {
+    if (this._busy) return;
+    this._busy=true; this._error=''; this._render();
+    try {
+      const records=[]; let offset=0, total=null, maxOperations=null;
+      while (total===null || offset<total) {
+        const page=await this._hass.callWS({type:'solar_inverter_bridge/journal',offset,limit:200});
+        if (!Array.isArray(page.records) || !Number.isInteger(page.retained)) throw new Error('Invalid journal page.');
+        // Fix the export boundary at the first page; later commands remain in HA.
+        if(total===null) { total=page.retained; maxOperations=page.max_operations; }
+        const batch=page.records.slice(0,total-offset);
+        if(!batch.length && offset<total) throw new Error('Journal export was incomplete. Please try again.');
+        records.push(...batch); offset+=batch.length;
       }
-      this._downloadJournal(offset + page.records.length, next);
-    });
+      const payload={exported_at:new Date().toISOString(),scope:'all_devices',retained:total,max_operations:maxOperations,records};
+      const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download='solar-inverter-bridge-journal.json';link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch(error) { this._error=error.message || 'Unable to export the journal.'; }
+    finally { this._busy=false;this._render(); }
   }
 
   _errorMessage(code) {
@@ -998,6 +1289,12 @@ class SolarInverterBridgePanel extends HTMLElement {
       collector_not_connected: "The collector is offline. Wait for it to reconnect before applying a change.",
       collector_reset_rejected: "The Wi-Fi module did not accept the restart command. No inverter setting was written.",
       collector_at_rejected: "The collector did not answer a module query. No configuration was written.",
+      collector_destination_not_local: "The name does not resolve exclusively to this HA's LAN interfaces. Check DNS or use this HA's stable LAN IP. No address was written.",
+      collector_destination_not_listening: "The selected port is not an active primary Bridge listener. Use the collector TCP port, not the HA web port. No address was written.",
+      collector_endpoint_baseline_changed: "The collector address changed since your check. Read it again and review the destination. This request did not write an address.",
+      collector_restore_target_mismatch: "This is not the return address saved by the server for this collector. Read the saved state again.",
+      invalid_collector_endpoint: "Enter a hostname or LAN IPv4 address and a TCP port from 1 to 65535. This collector's address must use host,port,TCP format.",
+      collector_endpoint_command_unconfirmed: "The collector command was not confirmed. Check the recorded result before another change; the address may already have changed.",
       parameter_not_observed: "A valid reading of this parameter is required before it can be changed.",
       value_outside_register_step: "The value does not match the parameter step. It was not rounded or sent.",
       value_outside_register_range: "The value cannot be encoded in this unsigned register.",
@@ -1035,8 +1332,37 @@ class SolarInverterBridgePanel extends HTMLElement {
   }
 
   _action(action, value, device) {
+    if (action === 'diagnostics-open' || action === 'journal-open') {
+      this._navigate(`sib/device/${device || this._device}/activity`);
+      this.querySelector(action === 'journal-open' ? '#command-journal' : '#device-diagnostics')?.scrollIntoView({block:'start'});
+      return;
+    }
+    if (action === 'connection-start' || action === 'connection-restore') {
+      this._connectionFlow={device,step:action==='connection-restore'?1:0,endpointOnly:action==='connection-restore',restore:action==='connection-restore'};
+      this._error='';this._endpointAck[device]=false;
+      if(action==='connection-restore') return this._endpointAction('restore',device);
+      this._render();this.querySelector('#connection-wizard')?.scrollIntoView({block:'start'});return;
+    }
+    if (action === 'connection-close') { this._connectionFlow=null;this._error='';this._render();return; }
+    if (action === 'connection-method') {
+      this._drafts[device+':connection:method']=value;this._saveDrafts();this._render();return;
+    }
+    if (action === 'connection-back') { this._connectionFlow.step=Math.max(this._connectionFlow.endpointOnly?1:0,this._connectionFlow.step-1);this._error='';this._render();return; }
+    if (action === 'connection-next') {
+      const current=this._status.devices.find(d=>d.device_id===device);
+      if(!current || (this._connectionFlow.step===1 && !this._connectionCanReview(current)))return;
+      if([...this.querySelectorAll('#connection-wizard input')].some(input=>!input.checkValidity()))return;
+      this._connectionFlow.step++;this._error='';this._render();this.querySelector('#connection-wizard')?.scrollIntoView({block:'start'});return;
+    }
+    if (action.startsWith('endpoint-')) return this._endpointAction(action.slice(9), device);
     if (action.startsWith('incident-')) return this._incidentAction(action, value, device);
-    if (action === "compatibility-open") { this._reportOpen=true; this._disclosures['setup-help']=true; this._disclosures['home-help']=true; this._render(); this.querySelector('#report-inverter_model')?.scrollIntoView({block:'center'}); return; }
+    if (action === "compatibility-open") {
+      this._reportOpen=true;
+      if(this._wizard) this._disclosures['setup-help']=true;
+      else if(!this._device) this._disclosures['home-help']=true;
+      if(this._device && !this._wizard)this._navigate(`sib/device/${this._device}/activity`);else this._render();
+      this.querySelector('#report-inverter_model')?.scrollIntoView({block:'center'});return;
+    }
     if (action === "profile-discover" || action === "profile-more") return this._call({type:"solar_inverter_bridge/profile",action:"discover",collector_sha256:value,resume:action==="profile-more"});
     if (action === "profile-cancel") return this._call({type:"solar_inverter_bridge/profile",action:"cancel",collector_sha256:value});
     if (action === "profile-recheck") return this._call({type:"solar_inverter_bridge/profile",action:"recheck",device_id:device,...(this.querySelector('#profile-variant') ? {variant_id:this.querySelector('#profile-variant').value} : {})});
@@ -1102,7 +1428,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "setup-connections") { this._error=""; return this._navigate("sib/add/1"); }
     if (action === "connect-collector" || action === "save-connection") {
       const scope = action === "save-connection" ? device + ":connection" : "setup";
-      const config = {method:this.querySelector('#connection-method').value,
+      const config = action === 'save-connection' && this._connectionFlow?.device === device ? this._connectionConfig(this._status.devices.find(d=>d.device_id===device)) : {method:this.querySelector('#connection-method').value,
         collector_ip:this.querySelector('#collector-ip').value.trim(),
         callback_host:this.querySelector('#callback-host').value.trim(),
         callback_port:Number(this.querySelector('#callback-port').value),
@@ -1119,6 +1445,7 @@ class SolarInverterBridgePanel extends HTMLElement {
       return this._call({type:'solar_inverter_bridge/'+(action === 'save-connection' ? 'set_connection' : 'connect_collector'),...(action === 'save-connection' ? {device_id:device} : {}),request_id:this._drafts[scope+':connection_request'],...config},result=>{
         this._status.connection_requests=[...(this._status.connection_requests || []).filter(r=>r.request_id!==result.request_id),result];
         if (action === 'save-connection') for (const key of ['method','collector_ip','callback_host','callback_port','udp_port']) this._clearDraft(scope,key);
+        if (action === 'save-connection' && this._connectionFlow?.device === device) this._connectionFlow.step=3;
       });
     }
     if (action === "choose-collector") {
@@ -1145,8 +1472,10 @@ class SolarInverterBridgePanel extends HTMLElement {
       const request=(this._status.connection_requests || []).find(r=>r.request_id===this._drafts['setup:connection_request']);
       const connection = request && (!request.collector_ip || request.collector_sha256===value) ? {connection_request_id:request.request_id} : {};
       return this._call({type: "solar_inverter_bridge/enroll", collector_sha256: value, name,...connection}, result => {
-        for (const key of ["name", "source", "collector", "method", "collector_ip", "callback_host", "callback_port", "udp_port", "connection_request", "connection_signature"]) this._clearDraft("setup", key);
-        this._navigate(`sib/device/${result.device_id}/overview`);
+        const reviewEndpoint = this._draft('setup', 'endpoint_offer', false);
+        for (const key of ["name", "source", "collector", "method", "collector_ip", "callback_host", "callback_port", "udp_port", "connection_request", "connection_signature", "endpoint_offer"]) this._clearDraft("setup", key);
+        if(reviewEndpoint){this._connectionFlow={device:result.device_id,step:1};this._drafts[result.device_id+':connection:method']='redirect';this._drafts[result.device_id+':connection:rewrite']=true;this._saveDrafts();}
+        this._navigate(`sib/device/${result.device_id}/${reviewEndpoint ? 'connection' : 'overview'}`);
       });
     }
     if (action === "clock") {
@@ -1189,7 +1518,7 @@ class SolarInverterBridgePanel extends HTMLElement {
     if (action === "journal") return this._downloadJournal();
     if (action === "download") {
       return this._call({type: "solar_inverter_bridge/diagnostics"}, diagnostic => {
-        diagnostic.frontend = {version: "0.25.0", view: this._tab};
+        diagnostic.frontend = {version: "0.26.0", view: this._tab};
         const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostic, null, 2)], {type: "application/json"}));
         const link = document.createElement("a"); link.href = url; link.download = "solar-inverter-bridge-diagnostics.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);

@@ -667,6 +667,8 @@ async def test_websocket_readonly_user_cannot_use_admin_commands(hass, entry, ha
         {"type": DOMAIN + "/remove_device", "device_id": "missing"},
         {"type": DOMAIN + "/check_operation", "device_id": "missing", "operation_id": "no-send"},
         {"type": DOMAIN + "/diagnostics"},
+        {"type": DOMAIN + "/collector_endpoint", "device_id": "missing", "action": "read"},
+        {"type": DOMAIN + "/collector_endpoint", "device_id": "missing", "action": "write", "acknowledged": True},
     ]
     for command in commands:
         await client.send_json_auto_id(command)
@@ -674,6 +676,49 @@ async def test_websocket_readonly_user_cannot_use_admin_commands(hass, entry, ha
         assert response["success"] is False
         assert response["error"]["code"] == "unauthorized"
     assert entry.runtime_data["service"].transmitted == 0
+
+
+async def test_collector_endpoint_requires_acknowledgement_and_uses_shared_executor(hass, entry, hass_ws_client, monkeypatch):
+    from custom_components.solar_inverter_bridge.core import collector_endpoint
+    from custom_components.solar_inverter_bridge import network_hints
+    execute = AsyncMock(return_value={"outcome": "confirmed"})
+    monkeypatch.setattr(collector_endpoint, "execute", execute)
+    monkeypatch.setattr(network_hints, "async_network_hints", AsyncMock(return_value={"addresses": [{"address": "192.168.1.10"}]}))
+    client = await hass_ws_client(hass)
+    command = {"type": DOMAIN + "/collector_endpoint", "device_id": "fixture", "action": "write",
+               "operation_id": "endpoint-1", "value": "m2m.eybond.com,18899,TCP",
+               "expected_value": "dtu_ess.eybond.com,18899,TCP", "expected_transport": "binary",
+               "expected_listener_port": 8899}
+    await client.send_json_auto_id(command)
+    response = await client.receive_json()
+    assert response["error"]["message"] == "collector_endpoint_risk_acknowledgement_required"
+    execute.assert_not_awaited()
+    await client.send_json_auto_id({**command, "acknowledged": True})
+    response = await client.receive_json()
+    assert response["success"]
+    assert execute.await_args.args == (entry.runtime_data["service"], "fixture", "write")
+    assert execute.await_args.kwargs["local_addresses"] == ["192.168.1.10"]
+    assert execute.await_args.kwargs["expected_transport"] == "binary"
+
+
+async def test_endpoint_return_address_is_server_owned_but_redacted_from_diagnostics(hass, entry, hass_ws_client):
+    storage = entry.runtime_data["storage"]
+    device = await hass.async_add_executor_job(storage.enroll, "endpoint-redaction", "Fixture", "modbus_protocol_4")
+    from functools import partial
+    await hass.async_add_executor_job(partial(storage.accept_operation, device, "endpoint-redaction-op",
+        {"key":"collector_server_endpoint", "collector_action":"write", "value":"192.168.99.23,18899,TCP", "expected_value":"private-ha.example,18899,TCP"},
+        write_plan={"endpoint":"private-ha.example,18899,TCP"}))
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type":DOMAIN+"/collector_endpoint", "action":"state", "device_id":device})
+    response = await client.receive_json()
+    assert response["result"]["saved_endpoint"] == "private-ha.example,18899,TCP"
+    await client.send_json_auto_id({"type":DOMAIN+"/diagnostics"})
+    response = await client.receive_json()
+    import json
+    serialized = json.dumps(response)
+    assert "192.168.99.23" not in serialized
+    assert "private-ha.example" not in serialized
+    assert "redacted collector endpoint" in serialized
 
 
 async def test_network_hints_are_read_only_and_do_not_guess_gateway(hass, entry, hass_ws_client, monkeypatch):

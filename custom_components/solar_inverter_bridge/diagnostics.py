@@ -60,7 +60,13 @@ async def async_get_config_entry_diagnostics(hass, entry):
                                "desired_value": record.get("send_value", record.get("request", {}).get("value")),
                                "baseline": record.get("request", {}).get("expected_value"),
                                **{key: record.get(key) for key in ("state", "outcome", "reason", "resolution", "unresolved", "write_attempts",
-                                                                 "created_at", "send_intent_at", "resolved_at", "last_observed_value", "last_observed_at")}})
+                                                                  "created_at", "send_intent_at", "resolved_at", "last_observed_value", "last_observed_at")}})
+            if record.get("request", {}).get("collector_action"):
+                # The maintenance journal intentionally retains return addresses;
+                # a shareable diagnostic must not expose private names or LAN IPs.
+                for key in ("desired_value", "baseline", "last_observed_value"):
+                    if operations[-1].get(key) is not None:
+                        operations[-1][key] = "[redacted collector endpoint]"
         devices.append({"reference": references[identifier], "profile": device["profile_id"],
                           "profile_acceptance": device.get("profile_acceptance"),
                           "profile_layers": device.get("profile_layers"),

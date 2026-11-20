@@ -87,8 +87,8 @@ detected before I/O.
 
 ## What the panel shows
 
-**Profile composition** appears in proposals, enrollment, Configuration, Connection
-and the catalog. It shows the common map, any required model extension, selection
+**Profile composition** appears in proposals, enrollment, Configuration and the
+catalog in Diagnostics. It shows the common map, any required model extension, selection
 basis, native identifiers and evidence state. Saved metadata is not a fresh read check.
 
 **Use common map** allows an unlisted model to use a checked family subset after

@@ -35,6 +35,24 @@ payload and control source paths. The [device register](../DEVICE_COMPATIBILITY.
 links exact model records, including uncertain or corrected attributions. Keep those
 links with the fields/models they justify rather than duplicating whole catalogs here.
 
+The [register-map candidate table](../DEVICE_COMPATIBILITY.md#additional-register-map-candidates)
+pins additional external model lists and register definitions for low SMG, MUST,
+SRNE, Growatt SPF, Deye and Solis. These are documentation-level comparisons of
+existing maps, not imported drivers or new hardware qualification. In particular,
+serial/Solarman transport evidence does not establish an EyeBond collector path;
+SPF 6000 ES Plus BMS offsets, SMG II USB-A variants and the separate LVYUAN 6.5 kW
+map retain explicit limitations instead of being folded into existing profiles.
+
+Collector endpoint wire facts were additionally reviewed against
+[ha-eybond-local management at 03d3681](https://github.com/groove-max/ha-eybond-local/blob/03d3681a4f065a629871f2edc2255d0cf8632e57/custom_components/eybond_local/collector/management.py)
+and its [collector wire definitions](https://github.com/groove-max/ha-eybond-local/blob/03d3681a4f065a629871f2edc2255d0cf8632e57/custom_components/eybond_local/collector/collector_wire.py):
+FC2/FC3 endpoint parameter 21, separate apply parameter 29, AT `CLDSRVHOST1`,
+`INTPARA=29,1`, and command acceptance/readback distinctions. The implementation
+uses this project's existing session owner and durable ledger, not the external
+project's management or recovery implementation. The
+[reference hardware check](../verification/README.md#collector-endpoint-write-and-return)
+qualifies the tested firmware and sequence only.
+
 ## Evidence rules
 
 - Separate documented facts, synthetic fixtures, external reports, local hardware

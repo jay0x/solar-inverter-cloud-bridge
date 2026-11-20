@@ -34,7 +34,7 @@ separate card, frontend plugin or framework build. Product strings are en-US.
 
 ## Profile composition
 
-Panel 0.25.0 consumes the backend `profile_layers` description. Recognition,
+Panel 0.26.0 consumes the backend `profile_layers` description. Recognition,
 enrollment review, Configuration, Connection and catalog details show the common
 map separately from a required model extension and qualification evidence. A common-only candidate
 uses **Use common map** without requiring an exact model name. Required corrections
@@ -69,10 +69,11 @@ inventory resolves semantic keys with a neutral Other settings fallback. Present
 grouping never mutates fields or definition fingerprints. Register ranges from
 Protocol 4 must not classify low-address SMG, Deye or virtual ASCII slots.
 
-The Overview configuration shortcut uses a grid with a separate action row and a
-16 px text-to-action gap. Direct heading/paragraph/action sections use explicit
-spacing. Browser checks measure these gaps, value alignment and containment across
-360/390/768/1440 px in both themes.
+Overview places **Recent changes** beside At a glance, replacing its former Inverter
+settings shortcut. It has no standalone Cloud assignment operation card. Recent
+rows retain outcomes, actors and timestamps; **Full journal** opens Activity's
+command-journal section. Direct heading/paragraph/action sections use explicit
+spacing and remain contained across 360/390/768/1440 px in both themes.
 
 The **Home Assistant entities** link uses the actual HA device-registry ID, not the
 bridge's enrollment UUID. HA's native device page has fixed entity categories;
@@ -92,8 +93,12 @@ HA LAN address and ports. A connection-attempt ID is saved before sending; reloa
 does not resend automatically. Inverter verification and explicit enrollment remain
 separate from callback bootstrap, and the connection choice persists after enrollment.
 
-The device's **Connection** tab reuses these fields for **Save connection**, with
-device-scoped drafts and request IDs independent of the add wizard. Saving preserves
+The device's **Connection** tab presents one column: read-only status, connection
+settings, compact collection options, collapsed Advanced & maintenance and removal.
+The **Change connection** flow has Method, Address, Review and Result steps. Callback
+and Direct are primary choices; Automatic is under Advanced. Drafts and request IDs
+are device-scoped and independent of the Add wizard. Navigation/closing the flow
+does not save or send a connection request. Saving preserves
 enrollment and registry IDs. Paused collection saves the preference without UDP.
 Show the attempt result separately from the active connection and fresh readings.
 **Pause between polls, seconds** accepts integers 1–300; retain `poll_interval` as
@@ -114,7 +119,52 @@ tools use disclosures; their open state survives status refresh. Focused inputs 
 their existing refresh protection, while a focused help summary does not stop new
 connections from appearing. The home page's technical tools are collapsed initially.
 
+## Cloud assignment editor
+
+The Direct connection address step offers an explicit collector-server rewrite.
+Keeping the existing server only changes the bridge preference after confirmation.
+Address inputs/checks, risk review and results are presented in separate steps;
+the Result step retains explicit recovery/Apply continuation after a lost response.
+Advanced & maintenance also opens the saved-address restoration flow.
+Host defaults to `homeassistant.local`
+and port to 18899; discovered HA LAN IP and the server-saved return address are explicit
+alternatives. Opening the page reads only journal state. Read/Check explicitly query
+the collector. A successful destination/identity check is valid for one minute and
+is invalidated by field edits; risk acknowledgement is scoped to that check.
+Destination-check errors appear directly below the Check button, with `role="alert"`
+and field descriptions pointing to that result. They survive status refresh, clear
+when the address is edited or checked again, and are brought into view after the
+explicit check. They are not routed to the page-level error banner.
+
+Save and apply persists the write request ID in browser storage before sending and
+starts a separately journaled Apply only after confirmed write/readback. Lost replies
+never trigger an automatic retry, Apply or restart. Browser reload retrieves server
+history without hardware commands; verified incomplete writes offer explicit Apply.
+The original return address belongs to the server journal, not browser drafts.
+Uncertainty checks and explicit keep-current resolution do not resend writes.
+
+The editor distinguishes address readback, Apply acceptance and a new primary session
+with the requested address. Callback users can explicitly select the direct connection
+after Apply. It does not infer restart/power-loss persistence from these checks.
+Recovery help explains callback/BLE/AP limits and why a restart is not rollback.
+The final Add step offers review on Connection after enrollment, with no automatic
+endpoint mutation. Tests cover lost replies, reload, saved-address restoration,
+check/consent invalidation, escaping and 360/390/768/1440 layouts.
+
 ## Incident reports and compatibility feedback
+
+The device's **Diagnostics** section lives in Activity; Connection links there with
+the one-word **Diagnostics** button. Report tools open with **Reports**. Overview and
+Configuration do not append the large report block. Pre-enrollment/global tools remain
+available behind a collapsed Diagnostics disclosure on the inverter list and in setup.
+
+Activity's **Command journal → Download full journal** exports all retained operation
+records across devices, not raw TCP exchanges. Pagination is awaited sequentially;
+the export count is fixed from the first page so concurrent new operations do not
+extend the download indefinitely. It reports a failed/incomplete export instead of
+silently stopping at 200 records. Browser verification downloads 405 records over
+three pages. The maintenance journal may contain private values; sanitized diagnostics
+are a separate export.
 
 Activity and the compatibility tools expose the local incident recorder for enrolled
 and bridge-level failures. Known recovered events remain counters/cards, not automatic

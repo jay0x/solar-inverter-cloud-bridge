@@ -19,6 +19,8 @@ Status legend:
   when actual read evidence matches. Hardware has not been tested by this project.
 - **Research candidate:** source evidence exists, but a matching driver/map or
   collector path is not established. Recognition/report collection is still useful.
+- **Register-map candidate:** external model-specific register evidence overlaps an
+  implemented profile, but this Bridge's EyeBond path and model behavior are unverified.
 - **Family only:** a protocol/map is implemented, but the reviewed evidence does
   not establish an exhaustive list of exact retail SKUs.
 
@@ -60,6 +62,31 @@ See [PROFILE_EXPANSION.md](PROFILE_EXPANSION.md) for exact measurement/control c
 | **Kevolt PD0080G-TPM-EU**; alias **Kevolt 8 kW Three-Phase Hybrid** | `deye_3ph_high_80kw` internal key; actual source unit is **8 kW** | External type 5 / protocol 0x0104 / rated-power words 80000 raw at 0.1 W. The profile key does not indicate an 80 kW retail rating [C20] | Experimental 60-reading/118-control inventory; actual model applicability still requires read evidence |
 | **ZL Power GSIII 12 kW / GSIII** | `eybond_09c1`, fixed-column Q1/QF/PV?/F | External 09C1 evidence [C22]; distinct from PI30/G-ASCII/Short-ASCII. Family responses do not uniquely identify a retail model | Up to 24 readings/status fields including optional PV1/PV2; no write commands or new local hardware qualification |
 
+### Additional register-map candidates
+
+The following are **register-map candidates**, not newly hardware-qualified Bridge
+devices. Sources use RS232/RS485, direct USB Modbus or Solarman, so they establish
+model/map associations rather than a supported factory EyeBond connection. A matching
+collector, live profile checks and setting-specific readback are still required.
+Only the named labels are listed; neighboring power ratings or suffixes are not inferred.
+
+| Model / source label | Existing profile to compare | Evidence and limitations |
+| --- | --- | --- |
+| **PowMr POW-HVM5.5K-48V**, **POW-HVM5.5K-48V-P**; **Qoltec 53963**; **ANENJI 3 kW, 24 VDC / 120 VAC**; **SMG III 6.2 kW, 48 V** | `smg_legacy` / read-matched low SMG variant | External supported-device list and standard SMG register table agree on grid 202, output 210/213 and battery 215 [M1]. No native protocol number is assigned from a retail label. The source warns that some SMG III registers differ; SUF choices and battery voltage classes are model-specific. A separate SMG II 6 kW USB-A/wakeup variant in the same source has a different map and is excluded. |
+| **MUST PV18-5248 Pro**, **PH18-5248 Pro**, **PV18-3024 VHM**, **PV18-3224 VPM**, **PV18-1012 VPM**, **PV18-2012 ECO**, **PV19-6248 EXP** | `must_pv_ph18` common map | External community-confirmed model list [M2]; PV18/PV19 configurations use the same 15205 PV voltage and 25205/25206/25207 battery/output/grid voltage blocks [M2-map]. Optional fields, load scaling, model markers and 12/24/48 V settings still need live checks. Do not infer the PV3300/PV3900 variant from the retail name. |
+| **SRNE ASF48100U200-H** | `srne_modbus` | External hardware-tested reference explicitly targets SRNE Hybrid Modbus v1.96 [M3], the revision used by our profile. Register availability is device-specific; the external generated configuration is not imported into Bridge. |
+| **SRNE HSI-1500S**; **ANENJI 12 kW split-phase, 48 V**, exact SKU unspecified | `srne_modbus` common subset | External SRNE implementations and HSI register observations [M4], [M4-map]. Core SOC/voltage fields match 0x0100/0x0101; HSI is 12 V, single-phase/single-MPPT and rejects several extended blocks. The ANENJI source is split-phase, but our profile does not promise combined split-phase totals. Confirm current direction, optional fields and per-12-V settings against the actual firmware. |
+| **Growatt SPF 5000 ES**; **SPF 3000 ES** | `growatt_spf` | External SPF5000ES implementation and register definitions identify battery 17, SOC 18, grid 20/21 and output 22/23. The source explicitly describes SPF3000ES as a related variant with different charging limits, not as a separately measured unit [M5], [M5-map]. Those source limits are not applied to our controls. |
+| **Growatt SPF 6000 ES Plus** | `growatt_spf` common subset | Model-specific ESPHome configuration matches FC04 PV/output power, battery 17 at 0.01 V and SOC 18 [M6], [M6-map]. Its optional BMS block starts at 203 rather than our generic BMS-SOC address 93; that optional coverage is not established. Matching base telemetry does not qualify every energy/BMS field or control. |
+| **Deye SUN-5K-SG03LP1-EU** | `deye_lv` | Exact-model external report [M7-model] plus the single-phase map: battery 183/184, grid 150 and load power 178 [M7]. The external project also records an energy-reading issue; no blanket correctness of optional counters is claimed. Solarman transport is different from EyeBond. |
+| **Deye SUN-8K-SG04LP3-EU**, **SUN-12K-SG04LP3-EU** | `deye_3ph_high_80kw` common map | External exact-model reports [M8-model], [M8-model-12] and SG04LP3 definitions match battery 587/588/590, grid 598–600/625 and PV 672/676 [M8]. The profile ID's `80kw` suffix is historical, not the inverter rating. Model-specific controls remain unqualified; the 12 kW report concerns a write issue, not proof of successful control. |
+| **Solis S5-EH1P5K-L**, **S5-EH1P6K-L**, **RHI-3K-48ES-5G**, **S6-EH1P6K-L-PRO** | `solis_esinv` | External tested-model list and hybrid sensor definitions match 33073 grid voltage, 33093 temperature, 33094 frequency and 33133/33134/33139 battery readings [M9], [M9-map]. Our profile is monitoring-only. The external project's Solis dongle/Modbus TCP/serial support and writable schedules are not part of this Bridge. |
+
+No new runtime profile, model discriminator or setting limit was added for this
+documentation expansion. These candidates use the existing read-based recognition
+path if their actual collector and replies match; external support labels are not
+transferred into this project's hardware-verification status.
+
 ## 2. Named research candidates not yet claimed as a matching device profile
 
 These remain in the possible-device register so reports can resolve them. They
@@ -73,15 +100,16 @@ are not hidden or rejected just because their retail name is unknown.
 | **EASUN SMG II 8 kW / 11 kW** | Related register-map sources [S9] | Exact SKU, firmware, collector session and native signature. Existing SMG maps may fit; no blanket family hardware claim |
 | **Yingfa YF6.2K-2K-LEL-IF** | An owner reports the model, but the formerly attributed PI30 capture actually belonged to Sumry devices [C21] | Correct evidence for this particular Yingfa; do not borrow support from YF6.2K-LEL-1B |
 | **Sumry devices from the corrected Yingfa report**, exact SKUs unspecified | External PI30 evidence was reattributed to Sumry [C21] | Exact retail models; common PI30 can be tested, but the source does not justify inventing SKU names |
+| **LVYUAN TY-SIC-6.5KBE-W1** | External catalog describes a separate captured Modbus map, not the G-ASCII map used by the 3.6 kW model [M10] | A new reviewed map/recognition path. The current `g_ascii` profile must not be assigned from the shared brand/name |
 
 ## 3. Implemented families without an exhaustive retail-model list
 
 | Family / source descriptor | Available profile | Scope |
 | --- | --- | --- |
 | **SMG 6200 / SMG family 4200 variant** | `smg_legacy`, `smg_1`, `smg_11` | Generic firmware labels; the compiled source includes 11/30721 for one 4200 variant [S1] |
-| **SRNE-compatible Modbus / Anenji SRNE** | `srne_modbus` | Source map, default slave 1 / 9600 8N1; no exhaustive exact-SKU or local hardware list [C23] |
-| **Growatt SPF Off-Grid** | `growatt_spf` | Matching input/holding register layouts through a supported EyeBond session; not every SPF product/logger [S1] |
-| **Deye single-phase low-voltage hybrid** | `deye_lv` | The low-register family, distinct from the high three-phase map; no fabricated SUN-series SKU list [S1] |
+| **SRNE-compatible Modbus / Anenji SRNE** | `srne_modbus` | Source map, default slave 1 / 9600 8N1; named register-map candidates are listed above, not locally hardware-qualified [C23] |
+| **Growatt SPF Off-Grid** | `growatt_spf` | Matching input/holding layouts; the named ES/ES Plus candidates above are not an exhaustive SPF or logger list [S1] |
+| **Deye single-phase low-voltage hybrid** | `deye_lv` | The low-register family, distinct from the high three-phase map; named SUN-series candidates require their own live checks [S1] |
 | **Deye-compatible three-phase high-map hybrid** | `deye_3ph_high_80kw` | Includes the Kevolt source candidate; hardware/rating variants require actual evidence [S1], [C20] |
 | **Solis Hybrid ESINV** | `solis_esinv` | Matching high input-register family through a supported collector; proprietary Solis logger transport is not added [S1] |
 | **Sandi / Aohai FSA** | `aohai_fsa` | Matching input-register telemetry; exact retail SKUs not established in reviewed evidence [S1] |
@@ -108,8 +136,10 @@ or a user report establishing the exact label and observed protocol.
 4. Share the ZIP and generated issue description with the project maintainer.
    Use [GitHub Issues](https://github.com/jay0x/solar-inverter-cloud-bridge/issues).
    No report is uploaded automatically.
-5. Add a source-pinned model row and regression fixture. Mark hardware monitoring
-   or write/readback evidence only for the actual tested device/firmware/build.
+5. For a new runtime map or model-specific behavior, add a source-pinned model row
+   and regression fixture. Documentation-only register-map candidates do not change
+   runtime recognition or control coverage. Mark hardware monitoring or write/readback
+   evidence only for the actual tested device/firmware/build.
 
 No test write, load cycling, router change or cloud credential is required to
 request model support. Raw exchange can contain identifiers; its export is optional
@@ -153,3 +183,21 @@ downloaded or redistributed for this implementation.
 [C21]: https://github.com/groove-max/ha-eybond-local/blob/6ca2b23/catalog/inverter_models/models/yingfa_yf6_2k_2k_lel_if.json
 [C22]: https://github.com/groove-max/ha-eybond-local/blob/6ca2b23/catalog/inverter_models/models/zl_power_gsiii_12kw.json
 [C23]: https://github.com/groove-max/ha-eybond-local/blob/6ca2b23/catalog/inverter_models/models/srne_modbus_family.json
+[M1]: https://github.com/syssi/esphome-smg-ii/blob/796423feeb0ec0fff418712ab65ccd36d110c124/README.md
+[M2]: https://github.com/vladyspavlov/esphome-must-inverter/blob/e3c43a4915901dcc399dc2ac68eb7a5eb36a426d/README.md
+[M2-map]: https://github.com/vladyspavlov/esphome-must-inverter/blob/e3c43a4915901dcc399dc2ac68eb7a5eb36a426d/esp32-pv19.yaml
+[M3]: https://github.com/yudaihata/esphome-srne-inverter/blob/ba7b661a34df228869855f0197f108299ecf68e1/README.md
+[M4]: https://github.com/RAR/esphome-srne-inverter/blob/c52bb3fb502f6a8e5099c475b2fccf0b7249b261/README.md
+[M4-map]: https://github.com/RAR/esphome-srne-inverter/blob/c52bb3fb502f6a8e5099c475b2fccf0b7249b261/REGISTER_MAP_HSI1500S.md
+[M5]: https://github.com/Tobster86/growatt-spf5000es-linux-control/blob/4978dfee8074a99119e7bb289d96961216b335dc/README.md
+[M5-map]: https://github.com/Tobster86/growatt-spf5000es-linux-control/blob/4978dfee8074a99119e7bb289d96961216b335dc/common/spf5000es_defs.h
+[M6]: https://github.com/moongu0514/esphome-growatt-spf6000esplus-modbus/blob/0ff699c3308e86ccf4e23779a866bd79643af6c4/README.md
+[M6-map]: https://github.com/moongu0514/esphome-growatt-spf6000esplus-modbus/blob/0ff699c3308e86ccf4e23779a866bd79643af6c4/growatt-esphome.yaml
+[M7]: https://github.com/StephanJoubert/home_assistant_solarman/blob/690747497f763de0d7c99aa7c1145a7361f3e07d/custom_components/solarman/inverter_definitions/deye_hybrid.yaml
+[M7-model]: https://github.com/kellerza/sunsynk/issues/608
+[M8]: https://github.com/StephanJoubert/home_assistant_solarman/blob/690747497f763de0d7c99aa7c1145a7361f3e07d/custom_components/solarman/inverter_definitions/deye_sg04lp3.yaml
+[M8-model]: https://github.com/kellerza/sunsynk/issues/330
+[M8-model-12]: https://github.com/kellerza/sunsynk/issues/586
+[M9]: https://github.com/Pho3niX90/solis_modbus/blob/3a00b647c2afe6d6ce64806559fe389840c9589a/README.md
+[M9-map]: https://github.com/Pho3niX90/solis_modbus/blob/3a00b647c2afe6d6ce64806559fe389840c9589a/custom_components/solis_modbus/sensor_data/hybrid_sensors.py
+[M10]: https://github.com/groove-max/ha-eybond-local/blob/03d3681a4f065a629871f2edc2255d0cf8632e57/catalog/inverter_models/models/lvyuan_ty_sic_6_5kbe_w1.json

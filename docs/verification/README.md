@@ -6,8 +6,72 @@ See the [testing guide](../development/testing.md) for reproducible checks.
 
 ## Source candidate 1.0.1
 
-- Integration **1.0.1**, panel **0.25.0**; ledger/incident schemas unchanged.
-- Component fingerprint:
+- Integration **1.0.1**, panel **0.26.0**; ledger/incident schemas unchanged.
+- Current component fingerprint:
+  `6816a1a6337b7ae90843a21dc74148a2e8a761cf35434fc67be5ee2edd429dd5`.
+- Current offline suite: **275 cases, 274 passed, one TCP502 skip**; HA integration
+  suite: **38 passed**. Endpoint coverage includes durable deduplication, timeout
+  after effect, restart recovery, identity/route/baseline/DNS rejection, mismatched
+  readback, owner replacement and the constrained binary management reply mapping.
+- Connection uses one column with Method/Address/Review/Result steps,
+  compact collection controls and collapsed maintenance. Recent changes moved to
+  Overview; its old settings shortcut and standalone collector-operation card were
+  removed. Device Diagnostics and the full command journal are in Activity.
+- Browser checks cover navigation/cancellation without writes, callback preferences,
+  direct-address validation and consent, saved-address restoration, lost replies,
+  reload without replay, explicit Apply continuation, escaping and responsive layouts.
+  Check errors remain beside their action, survive refresh and clear on edit; mobile
+  checks verify that the result is in view. Panel and router browser suites passed.
+- Journal export was checked with 405 records over three pages. A live production
+  export returned all 2,201 retained records over 12 pages. The export fixes its
+  count from the first page and does not silently stop after the first 200 records.
+- The source candidate was installed on test HA 2026.11.2 and production HA 2026.10.4.
+  Backend deployment included preimages, ledger backups, source readback and Core
+  validation/restart; later JS/CSS changes were applied without restarting the runtime.
+  The test installation remained passive. Both installations matched the current
+  component fingerprint, including identity and compressed-request frontend responses.
+- Live Chromium on both installations verified the one-column layout at
+  360/390/768/1440 px and callback review without saving. On the active installation,
+  a direct-address check read the collector and resolved a redirected hostname;
+  Save remained gated by check and consent. Live browser validation sent no mutating
+  commands. Production retained its address/preferences, fresh telemetry and zero
+  unresolved operations. Physical endpoint-write qualification is listed separately below.
+- Shareable diagnostics redact collector endpoint values. The administrator's
+  maintenance journal intentionally retains the saved return address.
+
+### Collector endpoint write and return
+
+On the reference Wi-Fi.DTU firmware **8.50.12.3 / AT 1.11**:
+
+The following hardware experiment used the preceding backend build
+`d1b6e18d5b9605eab8a3c2f79ad26a317dd0af0d336184b75c35f6c59328feee`.
+The editor build was subsequently checked with read-only live UI operations.
+
+1. The original `dtu_ess.eybond.com,18899,TCP` endpoint was read through the primary
+   AT channel and again through an identified binary callback on TCP8899.
+2. A different EyeBond hostname, independently confirmed to resolve to the same
+   local HA, was written through callback FC3 parameter 21 and read back through
+   FC2. Apply parameter 29 was sent as a separate durable operation.
+3. The alternate endpoint was read through a new primary AT session on TCP18899.
+   After an accepted AT soft-restart command, another new primary session reported
+   the same alternate endpoint, without another callback trigger.
+4. The original endpoint was written/read back through the primary AT channel,
+   applied, and checked on a new primary session after a second accepted soft restart.
+5. Inverter collection was paused during endpoint mutation and restored afterward.
+   A one-minute observation had an initial not-yet-refreshed sample followed by
+   11 fresh samples, advancing telemetry timestamps and no unresolved operations.
+
+The two endpoint writes and two apply commands each had one durable send attempt.
+There were transient failed metadata reads around apply/reconnection; reads later
+succeeded, without repeating the mutations. This is not evidence of uninterrupted
+connectivity. The experiment establishes reported-address retention across the
+tested software-restart sequence, not a complete collector power-loss test or a
+guaranteed recovery path after an invalid destination. Both hostnames were locally
+redirected: vendor-cloud availability and collector mDNS support were not tested.
+
+### Overview and grouping qualification
+
+- Previous Overview-only component fingerprint:
   `01304fc494b9c11264a1c9741fbea581fe2f5775a02bf6ac92fca01620550ead`.
 - Offline suite: **264 cases, 263 passed, one TCP502 skip**. HA integration suite:
   **36 passed**. Panel/router browser suites and documentation/whitespace checks passed.

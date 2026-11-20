@@ -34,6 +34,7 @@ def async_register(hass):
     websocket_api.async_register_command(hass, ws_diagnostics)
     websocket_api.async_register_command(hass, ws_journal)
     websocket_api.async_register_command(hass, ws_module_info)
+    websocket_api.async_register_command(hass, ws_collector_endpoint)
     websocket_api.async_register_command(hass, ws_reset_collector)
     websocket_api.async_register_command(hass, ws_compatibility)
     websocket_api.async_register_command(hass, ws_incidents)
@@ -526,6 +527,45 @@ async def ws_module_info(hass, connection, msg):
         connection.send_error(msg["id"], "unknown_error", str(err))
         return
     connection.send_result(msg["id"], values)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "solar_inverter_bridge/collector_endpoint",
+    vol.Required("device_id"): str,
+    vol.Required("action"): vol.In(["state", "read", "prepare", "prepare_restore", "write", "restore", "apply", "check", "accept_current"]),
+    vol.Optional("operation_id"): OPERATION_ID,
+    vol.Optional("value"): str,
+    vol.Optional("expected_value"): str,
+    vol.Optional("expected_transport"): vol.In(["at", "binary"]),
+    vol.Optional("expected_listener_port"): vol.All(int, vol.Range(min=1, max=65535)),
+    vol.Optional("acknowledged", default=False): bool,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_collector_endpoint(hass, connection, msg):
+    entry = _runtime(hass)
+    if entry is None:
+        connection.send_error(msg["id"], "not_found", "bridge_not_loaded")
+        return
+    from .core.collector_endpoint import execute
+    from .network_hints import async_network_hints
+    try:
+        if msg["action"] in ("write", "restore", "apply", "accept_current") and not msg["acknowledged"]:
+            raise ValueError("collector_endpoint_risk_acknowledgement_required")
+        hints = await async_network_hints(hass) if msg["action"] in ("prepare", "prepare_restore", "write", "restore", "apply") else {"addresses": []}
+        result = await execute(entry.runtime_data["service"], msg["device_id"], msg["action"],
+                               **{key: msg[key] for key in ("operation_id", "value", "expected_value",
+                                                          "expected_transport", "expected_listener_port") if key in msg},
+                               local_addresses=[item["address"] for item in hints["addresses"]],
+                               actor_name=connection.user.name or "Administrator", actor_id=connection.user.id)
+    except (ValueError, OSError, StorageError) as error:
+        # No arbitrary resolver errors, endpoint strings or socket payloads in errors.
+        import re
+        detail = str(error)
+        connection.send_error(msg["id"], "collector_endpoint_failed",
+                              detail if re.fullmatch(r"[a-z][a-z0-9_]{0,80}", detail) else type(error).__name__)
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({

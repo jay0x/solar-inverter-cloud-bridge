@@ -19,14 +19,15 @@ Keep the collector ports restricted to your trusted local network.
 - Native sensors for solar generation, battery, grid, load and energy, where available.
 - Native controls for supported inverter settings, with independent readback.
 - A bundled **Inverters** panel with live readings, settings, history and diagnostics.
+- Guided connection changes, validated collector server addresses and saved-address restoration.
+- Recent changes in Overview and a complete retained-operation journal export in Activity.
 - Read-based protocol recognition and compatibility reports for unlisted devices.
 - A local incident black box with grouped failures, retained protocol samples and
   manual report sharing, including for already recognized inverters.
 
 Runs inside Home Assistant Core without a separate app, MQTT broker or vendor-cloud
-account. Current source candidate: **1.0.1**, with panel **0.25.0**; the latest published
-release is **1.0.0**. Available as a HACS custom repository;
-default-catalog inclusion requires approval by the HACS maintainers.
+account. Current source candidate: **1.0.1**, with panel **0.26.0**; the latest published
+release is **1.0.0**. Included in the default HACS catalog.
 
 ## Inverter models
 
@@ -38,7 +39,7 @@ models are experimental and require a matching collector and profile check.
 | Inverter models | Protocol / profile |
 | --- | --- |
 | ANENJI ANJ-6200W-48V<br>ANENJI ANJ-4000W-24V-WIFI | Classic SMG |
-| ANENJI ANJ-4000W-24V<br>Sandisolar SD-HYM-4862HWP | SMG Protocol 1 |
+| ANENJI ANJ-4000W-24V<br>ANENJI 6200, single output<br>Sandisolar SD-HYM-4862HWP | SMG Protocol 1 |
 | ANENJI ANJ-6200-48PL | SMG Protocol 2 |
 | ANENJI HHS-11kW-WIFI, without parallel | SMG Protocol 3 |
 | ANENJI ANJ-11KW-48V-W-P<br>ANENJI ANJ-11KW-48V-WIFI<br>ANENJI ANJ-11KW-48V-WIFI-P<br>Sandisolar SD 11KP48V WIFI | SMG Protocol 4 |
@@ -47,17 +48,39 @@ models are experimental and require a matching collector and profile check.
 | ZL Power GSIII 12 kW | EyeBond 09C1 |
 | LVYUAN TY-SIC-3.6KBE-W1<br>Gootu GT-H2436M14P5 | EyeBond / JsdSolar G-ASCII |
 | Bluesun BSM15K-B | Hopewind 0237 |
-| MUST PV18-3024<br>MUST-compatible PV3300<br>MUST PV39-8048 TLV / PV3900 | MUST PV/PH18 with marker-selected variants |
-| Yingfa YF6.2K-LEL-1B<br>Victor NM-PRO-6.2KW<br>PowMr 4.2KW | PI30 |
+| MUST PV18-3024<br>MUST-compatible PV3300<br>MUST PV39-8048 TLV / PV3900<br>DGK DGKINV02-24 6 kW (PV3300 marker required) | MUST PV/PH18 with marker-selected variants |
+| Yingfa YF6.2K-LEL-1B<br>Victor NM-PRO-6.2KW<br>PowMr 4.2KW<br>PowMr 6.2 kW (reported installation; exact SKU unspecified) | PI30 |
 | ANENJI GES48120M250-500P | Sumry GES 0x7530 |
 
 Classic SMG entries require matching low-address read evidence. PI30 MAX is a
 separate command variant and requires its own confirmation.
 
-Additional family maps cover **SRNE, Growatt SPF, Deye low-voltage hybrids, Solis
-ESINV, Sandi / Aohai FSA and SmartESS 0912/0921**. All require a compatible EyeBond
-collector connection; a supported register map alone does not establish support
-for a manufacturer's proprietary logger.
+### Additional register-map candidates
+
+These additional model labels have external register-map or implementation evidence
+that overlaps our existing profiles. **They have not been verified with this Bridge
+or its EyeBond transport.** They are candidates for a read-only compatibility check,
+not a promise that their stock logger or every setting will work.
+
+| Inverter models / reported labels | Candidate protocol / profile |
+| --- | --- |
+| PowMr POW-HVM5.5K-48V<br>PowMr POW-HVM5.5K-48V-P<br>Qoltec 53963<br>ANENJI 3 kW, 24 VDC / 120 VAC<br>SMG III 6.2 kW, 48 V | Classic / read-matched low-address SMG |
+| MUST PV18-5248 Pro<br>MUST PH18-5248 Pro<br>MUST PV18-3024 VHM<br>MUST PV18-3224 VPM<br>MUST PV18-1012 VPM<br>MUST PV18-2012 ECO<br>MUST PV19-6248 EXP | MUST PV/PH18 common map |
+| SRNE ASF48100U200-H<br>SRNE HSI-1500S<br>ANENJI 12 kW split-phase, 48 V (exact SKU unspecified) | SRNE Modbus common subset; phase-A scope |
+| Growatt SPF 3000 ES<br>Growatt SPF 5000 ES<br>Growatt SPF 6000 ES Plus | Growatt SPF common input-register map |
+| Deye SUN-5K-SG03LP1-EU | Deye low-voltage single-phase map |
+| Deye SUN-8K-SG04LP3-EU<br>Deye SUN-12K-SG04LP3-EU | Deye three-phase high-register map |
+| Solis S5-EH1P5K-L<br>Solis S5-EH1P6K-L<br>Solis RHI-3K-48ES-5G<br>Solis S6-EH1P6K-L-PRO | Solis ESINV common input-register map; monitoring only |
+
+The [model register](docs/DEVICE_COMPATIBILITY.md#additional-register-map-candidates)
+links each group to reviewed sources and records firmware, optional-register and
+transport limitations. Similar model names can use different maps: for example,
+some SMG II 6 kW firmware and LVYUAN 6.5 kW use layouts not implemented here.
+
+Other implemented family maps include **Sandi / Aohai FSA and SmartESS 0912/0921**.
+All profiles require a compatible EyeBond collector connection. Direct serial/USB,
+conventional Modbus TCP, and proprietary Growatt, Solis or Solarman logger support
+are not provided by this integration.
 
 See the [full model list, evidence and limitations](docs/DEVICE_COMPATIBILITY.md).
 Unlisted models can be checked against the available profiles from the setup wizard.
@@ -95,16 +118,21 @@ Assistant instance or a vendor cloud; keep one active controller.
 
 ## Install through HACS
 
-Add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
-repositories**, category **Integration**, then download **Solar Inverter Cloud
-Bridge** and restart Home Assistant. Add the integration from **Settings → Devices
-& services**. The integration domain is `solar_inverter_bridge`.
-Select **v1.0.0**; beta versions are not required for this release.
+1. Open HACS and search for **Solar Inverter Cloud Bridge**.
+2. Download **v1.0.0**; beta versions are not required for this release.
+3. Restart Home Assistant.
+4. Add **Solar Inverter Cloud Bridge** from **Settings → Devices & services →
+   Add integration**. The integration domain is `solar_inverter_bridge`.
+
+If the integration does not appear after refreshing the catalog, use the fallback:
+add `https://github.com/jay0x/solar-inverter-cloud-bridge` under HACS **Custom
+repositories**, category **Integration**, then follow the download and setup steps above.
+
 See [installation and collector setup](docs/INSTALL.md) before connecting a device.
 The tested combination is Home Assistant **2026.10.4** and HACS **2.0.5**.
 Home Assistant 2026.11 introduces the built-in Marketplace using the same repository
-catalog and `hacs.json`. Default-catalog inclusion is still pending; a GitHub release
-alone does not add the repository to that catalog.
+catalog and `hacs.json`. Search for **Solar Inverter Cloud Bridge** there as well;
+new catalog entries may take time to appear until the local catalog refreshes.
 
 ## Redirect the collector to Home Assistant
 
@@ -117,8 +145,9 @@ the collector to connect to HA over TCP 8899; readings and supported writes then
 use that TCP connection. The full collector identity and inverter profile must
 still pass their checks before enrollment.
 
-For an already added inverter, open **Connection → Connection method**, choose the
-method and addresses, and select **Save connection**. The enrollment, entities and
+For an already added inverter, open **Connection → Change connection** and follow
+**Method → Address → Review → Result**. Confirm the reviewed connection change;
+rewriting the collector server is a separate explicit choice. The enrollment, entities and
 history are retained. **Pause between polls, seconds** sets a 1–300-second delay
 after each completed cycle; it is not a fixed update interval.
 

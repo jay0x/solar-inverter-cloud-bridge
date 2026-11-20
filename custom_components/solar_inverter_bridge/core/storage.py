@@ -555,10 +555,27 @@ class Storage(IncidentStoreMixin):
                 request = saved.get("request") or {}
                 record = {key: saved.get(key) for key in ("operation_id", "device_id", "state", "outcome", "resolution", "reason", "unresolved", "created_at", "resolved_at", "actor_name", "write_attempts", "last_observed_value", "last_observed_at")}
                 record["setting_key"] = request.get("key")
+                record["collector_action"] = request.get("collector_action")
                 record["desired_value"] = saved.get("send_value", request.get("value"))
                 record["previous_value"] = request.get("expected_value")
                 records.append(record)
             return records
+        return self.call(read)
+
+    def collector_endpoint_history(self, device_id):
+        """Retain the original return address in the durable, device-bound journal."""
+        def read():
+            if self.db.execute("SELECT 1 FROM devices WHERE device_id=?", (device_id,)).fetchone() is None:
+                raise StorageError("device_missing")
+            first = self.db.execute("""SELECT record FROM operations WHERE device_id=?
+                AND json_extract(record, '$.request.collector_action')='write'
+                AND json_extract(record, '$.write_plan.endpoint') IS NOT NULL ORDER BY rowid LIMIT 1""",
+                (device_id,)).fetchone()
+            latest = self.db.execute("""SELECT record FROM operations WHERE device_id=?
+                AND json_extract(record, '$.request.collector_action') IS NOT NULL
+                ORDER BY rowid DESC LIMIT 1""", (device_id,)).fetchone()
+            return {"saved_endpoint": json.loads(first[0])["write_plan"]["endpoint"] if first else None,
+                    "latest_operation": json.loads(latest[0]) if latest else None}
         return self.call(read)
 
     def record_diagnostic(self, record):

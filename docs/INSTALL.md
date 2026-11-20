@@ -1,13 +1,15 @@
 # Install and operate Solar Inverter Cloud Bridge
 
-This guide describes source candidate **1.0.1**, with panel **0.25.0**. Check tagged
-release notes for the version available through the store. The integration runs
+This guide describes source candidate **1.0.1**, with panel **0.26.0**. The latest
+published stable release is **1.0.0**; the guided connection editor and current
+layout described here are source-candidate features. Check the installed version
+and tagged release notes before using newly documented features. The integration runs
 inside Home Assistant Core. It does not require a Supervisor app, MQTT, or a separate
 frontend plugin. The current target is Home Assistant Core 2026.10.4.
 
 Read [Ports, collector protocols, and inverter profiles](PROTOCOLS_AND_PROFILES.md)
-for the current support matrix. The reference binary and AT paths are included
-in the manual-install ZIP and maintained with the GitHub source.
+for the current support matrix. The reference binary and AT paths are maintained
+in the integration's component directory in the GitHub source.
 
 The [profile guide](PROFILE_EXPANSION.md) describes recognition and the implemented
 settings. Installation is available through HACS or the
@@ -86,10 +88,13 @@ at most once per 120 seconds. A full-identity mismatch blocks automatic attempts
 that runtime. Review the collector identity rather than accepting a different device.
 The connection preference is saved with the HA config entry after enrollment.
 
-For an existing inverter, open **Inverters → your inverter → Connection → Connection
-method**. Select Automatic, Local connection (UDP callback), or Redirected cloud
-connection; supply the collector IP and, if needed, the callback network fields.
-Select **Save connection**. You do not need to remove or enroll the inverter again:
+For an existing inverter, open **Inverters → your inverter → Connection → Change
+connection**. Follow **Method → Address → Review → Result**. Choose Local callback
+or Direct to Home Assistant; Automatic remains under Advanced in the method step.
+Supply the addresses, review, then select **Save connection**. A direct connection
+can retain the existing collector server or explicitly change it using the separate
+address-write checks below. Closing the review does not save or connect anything.
+You do not need to remove or enroll the inverter again:
 its identity, entities, names and history are retained.
 
 Saving waits for the current polling exchange and serializes with commands. An
@@ -113,6 +118,52 @@ With **Collect readings** unchecked, saving only stores the connection preferenc
 and does not send a callback. Enable collection to resume polling and automatic
 callback attempts. An expired or failed attempt has an explicit **Retry connection**
 action; browser reload does not resend it.
+
+### Edit Cloud assignment
+
+Open **Connection → Change connection → Direct to Home Assistant**, continue to
+Address, and enable **Change the collector's server address**. This changes
+the collector's persistent server address, not an inverter electrical parameter.
+The Add wizard offers **Review Cloud assignment after adding**; enrollment itself
+never writes the address.
+
+1. Use **Read current address** to read the identified collector. The original return
+   address is retained in the server's operation journal before the first write.
+2. Enter the server hostname/IP and TCP port. The default suggestion is
+   `homeassistant.local:18899`; **Use HA LAN IP** inserts the discovered HA LAN IP.
+   Use a stable address. This is a collector port, not HA's web port 8123.
+3. Select **Check address and collector**. The collector must reply, and a new local
+   destination must resolve exclusively to this HA's interfaces and an active primary
+   Bridge listener. Editing either field invalidates the check; checks expire after
+   one minute. Resolution from HA does not prove that a collector supports mDNS `.local`.
+4. Select **Review changes**. Read the connection-risk and recovery information,
+   then acknowledge it and select
+   **Save and apply address**. The backend checks the baseline and destination again,
+   records the old address and sends one write. Only confirmed readback can advance
+   to the separately recorded Apply command.
+5. In Result, use **Check change result** to read the collector and journal. If you were using
+   callback, **Use direct connection** selects the primary channel without rewriting
+   the address. New-connection proof is separate from command acceptance. The screen
+   does not automatically restart the collector or claim power-loss persistence.
+
+If a response is lost, reload does not resend. A verified write can be continued
+with **Apply verified address**; an unrecorded request can be explicitly retried with
+its original ID. An uncertain operation must be checked first. **Accept current
+address without resending** is an explicit, freshly read resolution of uncertainty,
+not proof that Apply or a restart happened.
+
+**Connection → Advanced & maintenance → Restore saved address** opens a review
+of the original server-recorded address. The address step also offers **Use saved
+return address**. Check and
+acknowledge it before saving. This exact saved destination may resolve outside HA;
+restoring it can resume vendor-cloud reporting and disconnect the primary HA channel.
+Its DNS resolution is checked, but the external server's reachability is not verified.
+
+If no management connection remains, HA cannot send the restore command. A previously
+working IP-based callback or a verified local Bluetooth/AP server-setting interface
+may provide a return path; neither is universal. Keep the original address outside
+HA as well. A normal restart is not an undo, and factory-reset recovery is not assumed.
+See the [endpoint protocol and qualification limits](PROTOCOLS_AND_PROFILES.md#collector-server-endpoint).
 
 Callback may affect an existing vendor-cloud session depending on firmware. The
 software uses a single inverter owner and does not run a parallel callback poller.
@@ -155,21 +206,27 @@ not stop the physical inverter, remove its entities or delete Recorder history;
 current telemetry is presented as unavailable while collection is paused. Use it
 for maintenance or when another controller is responsible for polling.
 
-### HACS custom-repository installation
+### HACS and Marketplace installation
 
-The repository is `https://github.com/jay0x/solar-inverter-cloud-bridge`.
-It has not yet been accepted into the default HACS catalog.
-GitHub tests, Hassfest and HACS validation pass for the reviewed candidate.
-Installation from the development branch was verified using HACS 2.0.5 on HA 2026.10.4:
+Solar Inverter Cloud Bridge is included in the default HACS catalog.
 
-1. In HACS, open **Custom repositories**, add the repository URL and choose
-   **Integration** as its category.
+1. Open HACS and search for **Solar Inverter Cloud Bridge**.
 2. Select the normal release **v1.0.0** (beta versions are not required), download
    **Solar Inverter Cloud Bridge**, and restart Home Assistant.
 3. Add the integration and configure the collector as described above.
 
+If it is missing after refreshing the catalog, use **Custom repositories** as a
+fallback: add `https://github.com/jay0x/solar-inverter-cloud-bridge` with category
+**Integration**, then follow the same download and setup steps.
+
+Home Assistant 2026.11 Marketplace uses the same catalog. New entries may take time
+to appear until its local catalog refreshes. HACS 2.0.5 on HA 2026.10.4 was checked;
+the exact v1.0.0 release commit was also installed through Marketplace on HA 2026.11.2.
+For unreleased source features, use the reviewed source installation described above;
+the normal release remains v1.0.0 until another release is published.
+
 HACS installs the component directory from the repository; a custom release ZIP
-is not required. Inclusion in HACS's default catalog is a separate submission.
+is not required.
 Home Assistant Core 2026.10.4 remains the tested minimum.
 
 ### Updating an installation
@@ -181,18 +238,25 @@ Check that the collector reconnects and produces fresh readings after the update
 
 ## Use the interface
 
-- **Overview:** live solar power, battery charge, output load, and operating mode.
+- **Overview:** live solar power, battery charge, output load, operating mode and Recent changes.
 - **Sensors:** current HA sensor values and native Recorder history.
 - **Configuration:** clock sync, recovery, documented parameters, search, and
   inline editors. Each row has a name and one value. Click the value to edit;
   Apply appears only for a valid change. A lock identifies hardware read-only fields;
   an empty fixed-width slot keeps editable values aligned. Fields with undocumented
   manufacturer limits use a warning in the same slot.
-- **Connection:** pause/resume polling, interval, and allowed network sources.
-- **Activity:** operation results, connection health, and redacted diagnostics.
+- **Connection:** status, guided connection changes, collection options and collapsed maintenance.
+- **Activity:** command-journal download, unresolved operation results, connection health and Diagnostics.
 
 The home-card Configuration button opens configuration directly. The same local brand mark
 is shown in the panel and Home Assistant's integration card.
+
+For the full operation journal, open **Activity → Command journal → Download full
+journal**. The JSON includes all retained Bridge operation records across inverters,
+including pages beyond the first 200. It is not a raw TCP packet log and can contain
+private setting values or collector addresses. **Overview → Full journal** links to
+the same section. Packet evidence is collected separately in **Activity → Diagnostics
+→ Reports**, with explicit raw-data inclusion when needed.
 
 The UI uses Home Assistant theme colors and supports narrow mobile screens.
 Drafts and pending request IDs survive a browser reload. Background status updates
